@@ -190,6 +190,14 @@ WsnRoutingApp::SetTiming(double txSlotDurationS, double rxSlotDurationS, uint8_t
 }
 
 void
+WsnRoutingApp::SetAckTimeoutS(double seconds)
+{
+    NS_ABORT_MSG_IF(!std::isfinite(seconds) || seconds <= 0.0,
+                    "ACK timeout must be finite and > 0, got " << seconds);
+    m_ackTimeoutS = seconds;
+}
+
+void
 WsnRoutingApp::SetPhyTiming(double bitrateBps, double radioOverheadS)
 {
     m_bitrateBps = bitrateBps;

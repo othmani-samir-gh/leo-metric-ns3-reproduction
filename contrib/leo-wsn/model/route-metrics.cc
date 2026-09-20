@@ -133,10 +133,17 @@ LeoMetric::RetransmissionsFromPowerDeficiency(double pTxRequiredDbm,
     double span = radio.retransmissionDeficiencySpanDb; // "15" in the paper
     double base = (10.0 / 9.0) * radio.rMax;
     double rD = std::pow(10.0, deficiencyDb / span) * base - base;
-    // Clamp to the physically sensible range [0, R_max]; a link that is
-    // already strong enough (deficiency <= 0) contributes no extra
-    // retransmissions from this term.
-    return std::clamp(rD, 0.0, static_cast<double>(radio.rMax));
+
+    if (radio.boundEq17ToRMax)
+    {
+        // Explicit v1.0.0 reconstruction policy: bound the operational
+        // retransmission-deficiency term to the representable retry range.
+        return std::clamp(rD, 0.0, static_cast<double>(radio.rMax));
+    }
+
+    // Literal transcription of Eq. (17), intentionally not clamped.
+    // R4 must record which policy is used for each experiment set.
+    return rD;
 }
 
 double

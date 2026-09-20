@@ -260,7 +260,11 @@ main(int argc, char* argv[])
     // ramp-up/down) NOT specified numerically by the paper; declared
     // assumption, default 100 us.
     double radioOverheadS = 100.0e-6;
-    bool useNrf52840Energy = false; // opt-in: see nrf52840-current-table.h caveats
+    uint32_t macMaxRetries = 4;     // finite-ARQ operational substitute; source timing/cap not fully published
+    double ackTimeoutS = 0.05;      // reconstruction assumption
+    double discoveryTimeoutS = 1.0; // R1 liveness guard; reconstruction assumption
+    bool boundEq17ToRMax = true;    // v1.0.0 behavior; false = literal Eq.17 sensitivity
+    bool useNrf52840Energy = false; // accounting mode only; physical TX remains discrete in both modes
     // HFXO crystal choice for RadioParameters::hfxoStandbyCurrentMa (only
     // matters when useNrf52840Energy=true). "none" (default) reproduces
     // RADIO-only current (Section 6.20.15's own scope, excludes the
@@ -322,9 +326,21 @@ main(int argc, char* argv[])
     cmd.AddValue("pingPayloadBytes", "ping payload size in bytes (paper: 100)", pingPayloadBytes);
     cmd.AddValue("bitrateBps", "PHY bitrate used for airtime/energy accounting", bitrateBps);
     cmd.AddValue("radioOverheadS", "fixed per-frame MAC/PHY turnaround, s", radioOverheadS);
+    cmd.AddValue("macMaxRetries",
+                 "stop-and-wait ARQ retry cap (operational reconstruction; sensitivity parameter)",
+                 macMaxRetries);
+    cmd.AddValue("ackTimeoutS",
+                 "ACK wait timeout in seconds (unpublished reconstruction parameter)",
+                 ackTimeoutS);
+    cmd.AddValue("discoveryTimeoutS",
+                 "path-discovery liveness timeout in seconds (R1 reconstruction parameter)",
+                 discoveryTimeoutS);
+    cmd.AddValue("boundEq17ToRMax",
+                 "true = v1.0.0 bounded Eq.17 reconstruction; false = literal unbounded Eq.17",
+                 boundEq17ToRMax);
     cmd.AddValue("useNrf52840Energy",
-                 "use the datasheet-anchored discrete nRF52840 current table instead of the "
-                 "continuous dBm-to-mW model (see nrf52840-current-table.h caveats)",
+                 "energy accounting only: false=Eq.14-style proxy, true=nRF52840 RADIO-current model; "
+                 "physical TX levels are discrete in both modes",
                  useNrf52840Energy);
     cmd.AddValue("hfxoCrystal",
                  "none|epson_fa128|epson_fa20h|epson_tsx3225|ndk_nx1612aa|ndk_nx1210ab -- adds "
@@ -354,6 +370,11 @@ main(int argc, char* argv[])
                  "destination-side best-route candidate-collection window, s (sensitivity sweep)",
                  discoveryWindowS);
     cmd.Parse(argc, argv);
+
+    NS_ABORT_MSG_IF(macMaxRetries > kMaxRetransmissionField,
+                    "--macMaxRetries must be <= "
+                        << static_cast<uint32_t>(kMaxRetransmissionField)
+                        << " so it fits the protocol retransmission field");
 
     MetricType metricType = ParseMetric(metricStr);
 
@@ -488,6 +509,7 @@ main(int argc, char* argv[])
 
         RadioParameters radio; // nRF52840 defaults from Section 3 / 3.1
         radio.backgroundNoiseDbm = backgroundNoiseDbm;
+        radio.boundEq17ToRMax = boundEq17ToRMax;
         radio.useNrf52840Energy = useNrf52840Energy;
         if (hfxoCrystal == "epson_fa128")
         {
@@ -566,6 +588,11 @@ main(int argc, char* argv[])
             app->SetPingPayloadBytes(pingPayloadBytes);
             app->SetEmaAlpha(emaAlpha);
             app->SetDiscoveryWindowS(discoveryWindowS);
+            app->SetDiscoveryTimeoutS(discoveryTimeoutS);
+            app->SetTiming(1.0e-3,
+                           1.0e-3,
+                           static_cast<uint8_t>(macMaxRetries));
+            app->SetAckTimeoutS(ackTimeoutS);
             app->SetPhyTiming(bitrateBps, radioOverheadS);
             nodes.Get(i)->AddApplication(app);
             app->SetStartTime(Seconds(0.0));

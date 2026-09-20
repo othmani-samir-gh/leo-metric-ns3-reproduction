@@ -72,6 +72,13 @@ struct RadioParameters
     uint8_t rMax{4};               //!< R_max in Eq. (16)-(17), paper uses 4
     double retransmissionDeficiencySpanDb{15.0}; //!< the "15" constant in Eq. (17)
 
+    /// Reconstruction policy for Eq. (17). The published/transcribed
+    /// equation can produce R_D > R_max (e.g. 40 at a 15 dB deficiency
+    /// with R_max=4). v1.0.0 silently clamped it to [0,R_max]. Keep that
+    /// historical behavior as the default, but expose it explicitly so
+    /// R4 can freeze/sweep literal-vs-bounded semantics without source edits.
+    bool boundEq17ToRMax{true};
+
     /// If true, TX/RX ENERGY ACCOUNTING uses the nRF52840 current table
     /// (nrf52840-current-table.h) instead of the simplified
     /// DbmToMw(dbm)/rxPowerPenaltyMw proxy.  This flag does NOT control

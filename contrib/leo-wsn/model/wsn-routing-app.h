@@ -194,6 +194,11 @@ class WsnRoutingApp : public Application
     /// Reset MAC-attempt cap and per-attempt slot durations (documented assumptions).
     void SetTiming(double txSlotDurationS, double rxSlotDurationS, uint8_t macMaxRetries);
 
+    /// ACK wait timeout used by the stop-and-wait ARQ reconstruction.
+    /// This timing is not published by the source paper and must be
+    /// recorded/swept as an experiment parameter.
+    void SetAckTimeoutS(double seconds);
+
     /// Sets the bitrate used to convert frame size into airtime for energy
     /// accounting (Section 3: "Two transmission rates are supported:
     /// 1 Mbit/s and 2 Mbit/s"), and a fixed radio/MAC turnaround overhead

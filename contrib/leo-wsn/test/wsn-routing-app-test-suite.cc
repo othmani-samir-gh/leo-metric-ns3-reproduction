@@ -798,6 +798,42 @@ class EffectiveSnrLqiFallbackTest : public TestCase
     }
 };
 
+
+class Eq17PolicyTest : public TestCase
+{
+  public:
+    Eq17PolicyTest()
+        : TestCase("Eq17 bounded and literal reconstruction policies are explicit and reproducible")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        RadioParameters bounded;
+        bounded.rMax = 4;
+        bounded.retransmissionDeficiencySpanDb = 15.0;
+        bounded.boundEq17ToRMax = true;
+
+        RadioParameters literal = bounded;
+        literal.boundEq17ToRMax = false;
+
+        const double boundedValue =
+            LeoMetric::RetransmissionsFromPowerDeficiency(15.0, 0.0, bounded);
+        const double literalValue =
+            LeoMetric::RetransmissionsFromPowerDeficiency(15.0, 0.0, literal);
+
+        NS_TEST_EXPECT_MSG_EQ_TOL(boundedValue,
+                                  4.0,
+                                  1e-12,
+                                  "bounded v1.0.0 policy must cap R_D at R_max");
+        NS_TEST_EXPECT_MSG_EQ_TOL(literalValue,
+                                  40.0,
+                                  1e-12,
+                                  "literal Eq.17 at 15 dB deficiency and R_max=4 equals 40");
+    }
+};
+
 class LinkUsableSuite : public TestSuite
 {
   public:
@@ -962,7 +998,18 @@ class EffectiveSnrLqiFallbackSuite : public TestSuite
 };
 
 static AckTimeoutListeningEnergySuite g_ackTimeoutListeningEnergySuite;
+class Eq17PolicySuite : public TestSuite
+{
+  public:
+    Eq17PolicySuite()
+        : TestSuite("leo-r2-eq17-policy", Type::UNIT)
+    {
+        AddTestCase(new Eq17PolicyTest(), TestCase::Duration::QUICK);
+    }
+};
+
 static EffectiveSnrLqiFallbackSuite g_effectiveSnrLqiFallbackSuite;
+static Eq17PolicySuite g_eq17PolicySuite;
 
 } // namespace leo
 } // namespace ns3

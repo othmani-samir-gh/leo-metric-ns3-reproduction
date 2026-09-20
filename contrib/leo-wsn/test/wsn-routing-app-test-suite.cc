@@ -6,6 +6,7 @@
 #include "ns3/rng-seed-manager.h"
 
 #include <limits>
+#include <type_traits>
 
 namespace ns3
 {
@@ -934,6 +935,24 @@ class ChannelStreamIdentityTest : public TestCase
     }
 };
 
+
+class ChannelContractTest : public TestCase
+{
+  public:
+    ChannelContractTest()
+        : TestCase("WsnChannel must not advertise ns3::Channel when WsnNetDevice is not a NetDevice")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        NS_TEST_EXPECT_MSG_EQ((std::is_base_of_v<Channel, WsnChannel>),
+                              false,
+                              "WsnChannel must use an honest Object contract instead of a Channel override returning nullptr devices");
+    }
+};
+
 class LinkUsableSuite : public TestSuite
 {
   public:
@@ -1120,7 +1139,18 @@ class ChannelStreamIdentitySuite : public TestSuite
 };
 
 static Eq17PolicySuite g_eq17PolicySuite;
+class ChannelContractSuite : public TestSuite
+{
+  public:
+    ChannelContractSuite()
+        : TestSuite("leo-r3-channel-contract", Type::UNIT)
+    {
+        AddTestCase(new ChannelContractTest(), TestCase::Duration::QUICK);
+    }
+};
+
 static ChannelStreamIdentitySuite g_channelStreamIdentitySuite;
+static ChannelContractSuite g_channelContractSuite;
 
 } // namespace leo
 } // namespace ns3

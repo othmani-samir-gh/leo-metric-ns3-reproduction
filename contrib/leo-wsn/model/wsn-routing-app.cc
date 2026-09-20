@@ -57,6 +57,8 @@ WsnHeader::Serialize(Buffer::Iterator start) const
     double b = pThDbm;
     start.Write(reinterpret_cast<const uint8_t*>(&b), sizeof(double));
     start.WriteHtonU32(intendedNextHopId);
+    start.WriteHtonU64(routeFingerprint);
+    start.WriteHtonU32(routeHopCount);
 }
 
 uint32_t
@@ -82,13 +84,15 @@ WsnHeader::Deserialize(Buffer::Iterator start)
     start.Read(reinterpret_cast<uint8_t*>(&b), sizeof(double));
     pThDbm = b;
     intendedNextHopId = start.ReadNtohU32();
+    routeFingerprint = start.ReadNtohU64();
+    routeHopCount = start.ReadNtohU32();
     return GetSerializedSize();
 }
 
 uint32_t
 WsnHeader::GetSerializedSize() const
 {
-    return 1 + 4 + 4 + 4 + 4 + sizeof(double) + 4 + 1 + 1 + 4 + 1 + sizeof(double) + sizeof(double) + 4;
+    return 1 + 4 + 4 + 4 + 4 + sizeof(double) + 4 + 1 + 1 + 4 + 1 + sizeof(double) + sizeof(double) + 4 + 8 + 4;
 }
 
 void
@@ -112,6 +116,18 @@ WsnRoutingApp::GetTypeId()
 
 uint64_t WsnRoutingApp::s_globalFrameCounter = 0;
 
+uint64_t
+MixRouteFingerprint(uint64_t hash, uint32_t nodeId)
+{
+    static constexpr uint64_t kFnvPrime = 1099511628211ULL;
+    for (int shift : {24, 16, 8, 0})
+    {
+        hash ^= static_cast<uint8_t>((nodeId >> shift) & 0xffu);
+        hash *= kFnvPrime;
+    }
+    return hash;
+}
+
 void
 WsnRoutingApp::ResetGlobalFrameCounter()
 {
@@ -129,7 +145,7 @@ WsnRoutingApp::NoteFrameSent()
                         << " -- almost certainly a runaway flood/relay/routing"
                            " loop rather than legitimate traffic for a small"
                            " topology. Aborting instead of hanging; check"
-                           " kMaxHopCount/kMaxRelaysPerFlood in"
+                           " kMaxHopCount/m_maxRelaysPerFlood in"
                            " wsn-routing-app.h and reduce nNodes/spacing/"
                            " envFactor to sanity-check connectivity first.");
     }
@@ -245,6 +261,13 @@ WsnRoutingApp::SetDiscoveryTimeoutS(double seconds)
     NS_ABORT_MSG_IF(!std::isfinite(seconds) || seconds <= 0.0,
                     "discovery timeout must be finite and > 0, got " << seconds);
     m_discoveryTimeoutS = seconds;
+}
+
+void
+WsnRoutingApp::SetMaxRelaysPerFlood(uint8_t cap)
+{
+    NS_ABORT_MSG_IF(cap == 0, "max relays per flood must be >= 1");
+    m_maxRelaysPerFlood = cap;
 }
 
 void
@@ -825,9 +848,9 @@ WsnRoutingApp::HandlePathDiscovery(WsnHeader hdr, uint32_t fromId, const WsnLink
     }
 
     auto& relayCount = m_floodRelayCount[hdr.originatorId][hdr.floodId];
-    if (!firstTime && relayCount >= kMaxRelaysPerFlood)
+    if (!firstTime && relayCount >= m_maxRelaysPerFlood)
     {
-        return; // re-relay budget exhausted for this flood, see kMaxRelaysPerFlood
+        return; // re-relay budget exhausted for this flood, see m_maxRelaysPerFlood
     }
     relayCount++;
     seenForFlood[hdr.floodId] = newAccumulated;
@@ -1043,6 +1066,10 @@ WsnRoutingApp::SendNextPing()
         hdr.seq = m_pingSeq;
         hdr.hopCount = 0;
         hdr.accumulatedMetric = 0.0;
+        static constexpr uint64_t kRouteFingerprintOffset = 14695981039346656037ULL;
+        hdr.routeFingerprint = MixRouteFingerprint(kRouteFingerprintOffset, m_nodeId);
+        hdr.routeHopCount = 0;
+        m_stats.pingTrace[{target, m_pingSeq}] = {"pending", 0, 0};
         m_stats.pingSent++;
         SendUnicastReliable(hdr, rtIt->second.nextHopId, 0, m_pingPayloadBytes);
         auto pingKey = std::make_pair(target, m_pingSeq);
@@ -1056,6 +1083,7 @@ WsnRoutingApp::SendNextPing()
         // (which now means "sent but no reply arrived in time"). Add both
         // columns together for a Fig. 6-equivalent total failure count.
         m_stats.pingNoRoute++;
+        m_stats.pingTrace[{target, m_pingSeq}] = {"no_route", 0, 0};
     }
 
     m_pingSeq++;
@@ -1075,6 +1103,7 @@ WsnRoutingApp::OnPingTimeout(uint32_t targetId, uint32_t seq)
     m_pingTimeoutEvents.erase(timeout);
 
     m_stats.pingTimeouts++;
+    m_stats.pingTrace[pingKey] = {"timeout", 0, 0};
     auto it = m_routingTable.find(targetId);
     if (it != m_routingTable.end())
     {
@@ -1108,10 +1137,17 @@ WsnRoutingApp::HandlePing(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& 
         if (it != m_routingTable.end() && it->second.valid && it->second.nextHopId != fromId)
         {
             m_alreadyForwarded.insert(fkey);
+            hdr.routeFingerprint = MixRouteFingerprint(hdr.routeFingerprint, m_nodeId);
+            hdr.routeHopCount++;
             SendUnicastReliable(hdr, it->second.nextHopId);
         }
         return;
     }
+
+    // The destination itself is part of the observed forward route.
+    hdr.routeFingerprint = MixRouteFingerprint(hdr.routeFingerprint, m_nodeId);
+    hdr.routeHopCount++;
+
     auto it = m_routingTable.find(hdr.originatorId);
     if (it == m_routingTable.end() || !it->second.valid)
     {
@@ -1126,6 +1162,8 @@ WsnRoutingApp::HandlePing(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& 
     reply.seq = hdr.seq;
     reply.hopCount = 0;
     reply.accumulatedMetric = 0.0;
+    reply.routeFingerprint = hdr.routeFingerprint;
+    reply.routeHopCount = hdr.routeHopCount;
     SendUnicastReliable(reply, it->second.nextHopId, 0, m_pingPayloadBytes);
 }
 
@@ -1165,6 +1203,7 @@ WsnRoutingApp::HandlePingReply(WsnHeader hdr, uint32_t fromId, const WsnLinkInfo
     }
     Simulator::Cancel(timeout->second);
     m_pingTimeoutEvents.erase(timeout);
+    m_stats.pingTrace[pingKey] = {"success", hdr.routeFingerprint, hdr.routeHopCount};
 }
 
 } // namespace leo

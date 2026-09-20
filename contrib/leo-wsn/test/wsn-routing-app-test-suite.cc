@@ -127,6 +127,18 @@ class WsnRoutingAppTestPeer
     {
         return app.LinkMetricTo(neighborId);
     }
+
+    static uint8_t MaxRelaysPerFlood(const WsnRoutingApp& app)
+    {
+        return app.m_maxRelaysPerFlood;
+    }
+
+    static void SetPingTracePending(WsnRoutingApp& app, uint32_t target, uint32_t seq)
+    {
+        app.m_stats.pingTrace[{target, seq}] = {"pending", 0, 0};
+        app.m_pingTimeoutEvents[{target, seq}] =
+            Simulator::Schedule(Seconds(10), [](){});
+    }
 };
 
 static Ptr<WsnRoutingApp>
@@ -965,6 +977,76 @@ class ChannelContractTest : public TestCase
     }
 };
 
+
+class RelayCapRuntimeTest : public TestCase
+{
+  public:
+    RelayCapRuntimeTest()
+        : TestCase("R4 relay cap is a runtime experiment parameter")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        auto app = MakeLeoApp(0, true);
+        app->SetMaxRelaysPerFlood(1);
+        NS_TEST_EXPECT_MSG_EQ(WsnRoutingAppTestPeer::MaxRelaysPerFlood(*app),
+                              1u,
+                              "relay cap 1 must be applied without source modification");
+        app->SetMaxRelaysPerFlood(3);
+        NS_TEST_EXPECT_MSG_EQ(WsnRoutingAppTestPeer::MaxRelaysPerFlood(*app),
+                              3u,
+                              "relay cap 3 must be applied without source modification");
+        app->Dispose();
+        Simulator::Destroy();
+    }
+};
+
+class PingRouteTraceTest : public TestCase
+{
+  public:
+    PingRouteTraceTest()
+        : TestCase("R4 successful ping records direct route fingerprint and hop count")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        auto app = MakeLeoApp(0, true);
+        const uint32_t target = 3;
+        const uint32_t seq = 7;
+        WsnRoutingAppTestPeer::SetPingTracePending(*app, target, seq);
+
+        static constexpr uint64_t kOffset = 14695981039346656037ULL;
+        uint64_t hash = MixRouteFingerprint(kOffset, 0);
+        hash = MixRouteFingerprint(hash, 1);
+        hash = MixRouteFingerprint(hash, 2);
+        hash = MixRouteFingerprint(hash, 3);
+
+        WsnHeader reply;
+        reply.type = FrameType::PING_REPLY;
+        reply.originatorId = 0;
+        reply.targetId = target;
+        reply.seq = seq;
+        reply.routeFingerprint = hash;
+        reply.routeHopCount = 3;
+
+        WsnLinkInfoTag tag;
+        WsnRoutingAppTestPeer::HandlePingReply(*app, reply, 2, tag);
+
+        const auto key = std::make_pair(target, seq);
+        const auto& obs = app->GetStats().pingTrace.at(key);
+        NS_TEST_EXPECT_MSG_EQ(obs.status, std::string("success"), "trace status must be success");
+        NS_TEST_EXPECT_MSG_EQ(obs.routeFingerprint, hash, "gateway must record forward-route fingerprint");
+        NS_TEST_EXPECT_MSG_EQ(obs.routeHopCount, 3u, "gateway must record forward-route hop count");
+
+        app->Dispose();
+        Simulator::Destroy();
+    }
+};
+
 class LinkUsableSuite : public TestSuite
 {
   public:
@@ -1162,7 +1244,29 @@ class ChannelContractSuite : public TestSuite
 };
 
 static ChannelStreamIdentitySuite g_channelStreamIdentitySuite;
+class RelayCapRuntimeSuite : public TestSuite
+{
+  public:
+    RelayCapRuntimeSuite()
+        : TestSuite("leo-r4-relay-cap-runtime", Type::UNIT)
+    {
+        AddTestCase(new RelayCapRuntimeTest(), TestCase::Duration::QUICK);
+    }
+};
+
+class PingRouteTraceSuite : public TestSuite
+{
+  public:
+    PingRouteTraceSuite()
+        : TestSuite("leo-r4-ping-route-trace", Type::UNIT)
+    {
+        AddTestCase(new PingRouteTraceTest(), TestCase::Duration::QUICK);
+    }
+};
+
 static ChannelContractSuite g_channelContractSuite;
+static RelayCapRuntimeSuite g_relayCapRuntimeSuite;
+static PingRouteTraceSuite g_pingRouteTraceSuite;
 
 } // namespace leo
 } // namespace ns3

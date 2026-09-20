@@ -133,7 +133,25 @@ class WsnHeader : public Header
     /// figures severalfold in well-connected topologies where many nodes
     /// overhear the same small, frequently-sent ACK frames.
     uint32_t intendedNextHopId{0};
+
+    /// R4 direct route evidence for PING/PING_REPLY transactions.
+    /// This 64-bit FNV-1a fingerprint is updated by the ACTUAL nodes
+    /// traversed by the forward PING and copied unchanged into the reply.
+    /// It is diagnostic evidence, not part of route selection.
+    uint64_t routeFingerprint{0};
+    uint32_t routeHopCount{0};
 };
+
+/// Stable 64-bit fingerprint helper used only for direct route evidence.
+uint64_t MixRouteFingerprint(uint64_t hash, uint32_t nodeId);
+
+struct PingTraceObservation
+{
+    std::string status; // pending|success|timeout|no_route
+    uint64_t routeFingerprint{0};
+    uint32_t routeHopCount{0};
+};
+
 
 struct RouteEntry
 {
@@ -161,6 +179,9 @@ struct NodeStats
     uint32_t pingNoRoute{0};
     // Energy broken down by frame type, mirroring Fig. 8/9's stacked bars.
     std::map<FrameType, double> energyByType;
+
+    /// Per-attempt direct route/status evidence keyed by (targetId, seq).
+    std::map<std::pair<uint32_t, uint32_t>, PingTraceObservation> pingTrace;
 };
 
 class WsnRoutingApp : public Application
@@ -222,6 +243,11 @@ class WsnRoutingApp : public Application
     /// The source paper does not publish this value; it is a reconstruction
     /// safety parameter and must be frozen/swept in the experiment manifest.
     void SetDiscoveryTimeoutS(double seconds);
+
+    /// Runtime cap on how many times one node may relay the same discovery
+    /// flood. The source paper does not publish this bound, so R4 records
+    /// it as an explicit experiment factor instead of requiring source edits.
+    void SetMaxRelaysPerFlood(uint8_t cap);
 
     /// Connection-phase entry point (Section 4: "each node ... performed
     /// path discovery one time" during the connection phase, itself
@@ -314,11 +340,9 @@ class WsnRoutingApp : public Application
     /// the simulation. Real deployments need an equivalent bound too.
     static constexpr uint32_t kMaxHopCount = 64;
 
-    /// Cap on how many times a single node may re-relay the *same* flood
-    /// (originatorId, floodId) even if later copies keep improving the
-    /// LEO metric, bounding the number of rebroadcast events in a densely
-    /// connected topology.
-    static constexpr uint8_t kMaxRelaysPerFlood = 3;
+    /// Runtime cap on how many times a single node may re-relay the same
+    /// (originatorId,floodId). R4 treats this as an explicit design factor.
+    uint8_t m_maxRelaysPerFlood{3};
     std::map<uint32_t, std::map<uint32_t, uint8_t>> m_floodRelayCount; //!< originatorId -> floodId -> count
 
     /// Destination-side candidate collection: rather than replying to

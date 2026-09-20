@@ -1,0 +1,16 @@
+# ns-3 build artifacts (this module is placed inside an ns-3 tree)
+build/
+cmake-cache/
+*.o
+*.so
+*.pyc
+__pycache__/
+
+# Local run output — the archived results live in results/
+leo-results*.csv
+mobility-diagnostics.csv
+summary*.csv
+significance*.csv
+discrimination.csv
+*_log.txt
+nohup.out

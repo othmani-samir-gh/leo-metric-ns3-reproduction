@@ -1,0 +1,974 @@
+#include "wsn-routing-app.h"
+
+#include "nrf52840-current-table.h"
+#include <ns3/log.h>
+#include <ns3/simulator.h>
+#include <ns3/uinteger.h>
+
+#include <algorithm>
+#include <cmath>
+#include <sstream>
+
+namespace ns3
+{
+namespace leo
+{
+
+NS_LOG_COMPONENT_DEFINE("WsnRoutingApp");
+
+// ---------------------------------------------------------------------
+// WsnHeader
+// ---------------------------------------------------------------------
+TypeId
+WsnHeader::GetTypeId()
+{
+    static TypeId tid = TypeId("ns3::leo::WsnHeader")
+                             .SetParent<Header>()
+                             .SetGroupName("LeoWsn")
+                             .AddConstructor<WsnHeader>();
+    return tid;
+}
+
+TypeId
+WsnHeader::GetInstanceTypeId() const
+{
+    return GetTypeId();
+}
+
+void
+WsnHeader::Serialize(Buffer::Iterator start) const
+{
+    start.WriteU8(static_cast<uint8_t>(type));
+    start.WriteHtonU32(originatorId);
+    start.WriteHtonU32(targetId);
+    start.WriteHtonU32(floodId);
+    start.WriteHtonU32(prevHopId);
+    // doubles serialized as raw bytes (host order sufficient for a
+    // single-process ns-3 simulation)
+    double m = accumulatedMetric;
+    start.Write(reinterpret_cast<const uint8_t*>(&m), sizeof(double));
+    start.WriteHtonU32(hopCount);
+    start.WriteU8(retransmissionCount);
+    start.WriteU8(isRetransmission);
+    start.WriteHtonU32(seq);
+    start.WriteU8(origType);
+    double a = pTxAdjDb;
+    start.Write(reinterpret_cast<const uint8_t*>(&a), sizeof(double));
+    double b = pThDbm;
+    start.Write(reinterpret_cast<const uint8_t*>(&b), sizeof(double));
+    start.WriteHtonU32(intendedNextHopId);
+}
+
+uint32_t
+WsnHeader::Deserialize(Buffer::Iterator start)
+{
+    type = static_cast<FrameType>(start.ReadU8());
+    originatorId = start.ReadNtohU32();
+    targetId = start.ReadNtohU32();
+    floodId = start.ReadNtohU32();
+    prevHopId = start.ReadNtohU32();
+    double m;
+    start.Read(reinterpret_cast<uint8_t*>(&m), sizeof(double));
+    accumulatedMetric = m;
+    hopCount = start.ReadNtohU32();
+    retransmissionCount = start.ReadU8();
+    isRetransmission = start.ReadU8();
+    seq = start.ReadNtohU32();
+    origType = start.ReadU8();
+    double a;
+    start.Read(reinterpret_cast<uint8_t*>(&a), sizeof(double));
+    pTxAdjDb = a;
+    double b;
+    start.Read(reinterpret_cast<uint8_t*>(&b), sizeof(double));
+    pThDbm = b;
+    intendedNextHopId = start.ReadNtohU32();
+    return GetSerializedSize();
+}
+
+uint32_t
+WsnHeader::GetSerializedSize() const
+{
+    return 1 + 4 + 4 + 4 + 4 + sizeof(double) + 4 + 1 + 1 + 4 + 1 + sizeof(double) + sizeof(double) + 4;
+}
+
+void
+WsnHeader::Print(std::ostream& os) const
+{
+    os << "type=" << static_cast<int>(type) << " orig=" << originatorId
+       << " target=" << targetId << " flood=" << floodId << " metric=" << accumulatedMetric
+       << " hops=" << hopCount;
+}
+
+// ---------------------------------------------------------------------
+// WsnRoutingApp
+// ---------------------------------------------------------------------
+TypeId
+WsnRoutingApp::GetTypeId()
+{
+    static TypeId tid =
+        TypeId("ns3::leo::WsnRoutingApp").SetParent<Application>().SetGroupName("LeoWsn").AddConstructor<WsnRoutingApp>();
+    return tid;
+}
+
+uint64_t WsnRoutingApp::s_globalFrameCounter = 0;
+
+void
+WsnRoutingApp::NoteFrameSent()
+{
+    ++s_globalFrameCounter;
+    if (s_globalFrameCounter > kGlobalFrameLimit)
+    {
+        NS_FATAL_ERROR("WsnRoutingApp: global frame counter exceeded "
+                        << kGlobalFrameLimit
+                        << " -- almost certainly a runaway flood/relay/routing"
+                           " loop rather than legitimate traffic for a small"
+                           " topology. Aborting instead of hanging; check"
+                           " kMaxHopCount/kMaxRelaysPerFlood in"
+                           " wsn-routing-app.h and reduce nNodes/spacing/"
+                           " envFactor to sanity-check connectivity first.");
+    }
+}
+
+WsnRoutingApp::WsnRoutingApp()
+{
+}
+
+void
+WsnRoutingApp::Configure(Ptr<WsnNetDevice> device,
+                          uint32_t nodeId,
+                          bool isGateway,
+                          MetricType metricType,
+                          const RadioParameters& radio,
+                          AtpcMode atpcMode)
+{
+    m_device = device;
+    m_nodeId = nodeId;
+    m_isGateway = isGateway;
+    m_metricType = metricType;
+    m_radio = radio;
+    m_atpcMode = atpcMode;
+    m_device->SetMaxTxPowerDbm(radio.pTxMaxDbm);
+    m_device->SetTxPowerDbm(radio.pTxMaxDbm);
+
+    switch (metricType)
+    {
+    case MetricType::HOP_COUNT:
+        m_metric = std::make_unique<HopCountMetric>();
+        break;
+    case MetricType::ZIGBEE_LQI:
+        m_metric = std::make_unique<ZigbeeLqiMetric>(0.95); // placeholder p_l, refined per-link below
+        break;
+    case MetricType::ZIGBEE_LQI_LITERAL:
+        m_metric = std::make_unique<ZigbeeLqiLiteralMetric>(); // Eq. (2)-(3) verbatim, see class doc comment
+        break;
+    case MetricType::LEO:
+        m_metric = std::make_unique<LeoMetric>();
+        break;
+    }
+
+    m_device->SetReceiveCallback(MakeCallback(&WsnRoutingApp::OnReceive, this));
+}
+
+void
+WsnRoutingApp::SetTiming(double txSlotDurationS, double rxSlotDurationS, uint8_t macMaxRetries)
+{
+    m_txSlotDurationS = txSlotDurationS;
+    m_rxSlotDurationS = rxSlotDurationS;
+    m_macMaxRetries = macMaxRetries;
+}
+
+void
+WsnRoutingApp::SetPhyTiming(double bitrateBps, double radioOverheadS)
+{
+    m_bitrateBps = bitrateBps;
+    m_radioOverheadS = radioOverheadS;
+    m_usePacketSizeTiming = true;
+}
+
+void
+WsnRoutingApp::SetPingPayloadBytes(uint32_t bytes)
+{
+    m_pingPayloadBytes = bytes;
+}
+
+void
+WsnRoutingApp::SetEmaAlpha(double alpha)
+{
+    NS_ABORT_MSG_IF(alpha < 0.0 || alpha > 1.0, "EMA alpha must be in [0,1], got " << alpha);
+    m_emaAlpha = alpha;
+}
+
+void
+WsnRoutingApp::SetDiscoveryWindowS(double seconds)
+{
+    NS_ABORT_MSG_IF(seconds < 0.0, "discovery window must be >= 0, got " << seconds);
+    m_discoveryWindowS = seconds;
+}
+
+void
+WsnRoutingApp::StartApplication()
+{
+}
+
+void
+WsnRoutingApp::StopApplication()
+{
+    Simulator::Cancel(m_pingTimer);
+    Simulator::Cancel(m_timeoutEvent);
+    for (auto& kv : m_pendingAcks)
+    {
+        Simulator::Cancel(kv.second.timeoutEvent);
+    }
+}
+
+// -----------------------------------------------------------------
+// Energy accounting
+// -----------------------------------------------------------------
+void
+WsnRoutingApp::ChargeEnergy(FrameType type, double txPowerDbm, bool isTx, uint32_t frameBytes)
+{
+    double durationS;
+    if (m_usePacketSizeTiming && frameBytes > 0)
+    {
+        // Airtime = bits / bitrate + fixed radio/MAC turnaround (P1-3: ties
+        // duration to actual frame size instead of a size-independent
+        // constant, so the paper's 100-byte ping payload -- Section 4 --
+        // genuinely affects the energy total rather than being cosmetic).
+        durationS = (8.0 * frameBytes) / m_bitrateBps + m_radioOverheadS;
+    }
+    else
+    {
+        // Fallback: fixed slot duration (documented assumption, see
+        // README's "Assumptions and limitations").
+        durationS = isTx ? m_txSlotDurationS : m_rxSlotDurationS;
+    }
+    // TX cost uses the actual radiated power (Eq. 14/15 units: mW); RX cost
+    // uses the constant reception penalty P_R (Eq. 14) rather than TX
+    // power, since P_R models the receiver chain's own consumption.
+    double powerMw;
+    if (m_radio.useNrf52840Energy)
+    {
+        // Discrete-level, datasheet-anchored model (see
+        // nrf52840-current-table.h). txPowerDbm should already have been
+        // snapped by the caller (SendUnicastReliable/BroadcastFrame) so
+        // the radiated power and the energy accounting agree.
+        powerMw = isTx ? Nrf52840TxPowerMw(txPowerDbm, m_radio.hfxoStandbyCurrentMa)
+                       : Nrf52840RxPowerMw(m_bitrateBps, m_radio.hfxoStandbyCurrentMa);
+    }
+    else
+    {
+        powerMw = isTx ? DbmToMw(txPowerDbm) : m_radio.rxPowerPenaltyMw;
+    }
+    double energyMWs = powerMw * durationS; // mW * s = mWs directly; no extra factor needed
+                                              // (a previous version erroneously multiplied by
+                                              // 1000, inflating every absolute energy figure by
+                                              // 1000x -- a constant factor that did not affect
+                                              // relative LEO/Hop-count/LQI comparisons but
+                                              // invalidated any comparison to the paper's
+                                              // absolute mWs figures).
+    // Defensive guard: a negative, NaN, or infinite per-frame energy
+    // value can only come from a genuine bug upstream (e.g. a corrupted
+    // duration or power figure) -- fail loudly here rather than silently
+    // accumulating a nonsensical value into the run's totals, which would
+    // be far harder to notice after the fact than an aborted run.
+    NS_ABORT_MSG_IF(!std::isfinite(energyMWs) || energyMWs < 0.0,
+                     "ChargeEnergy: non-physical per-frame energy computed ("
+                         << energyMWs << " mWs, powerMw=" << powerMw << ", durationS=" << durationS << ")");
+    m_stats.energyConsumedMWs += energyMWs;
+    m_stats.energyByType[type] += energyMWs;
+    m_device->AddEnergyMWs(energyMWs);
+}
+
+// -----------------------------------------------------------------
+// Link metric helper
+// -----------------------------------------------------------------
+double
+WsnRoutingApp::LinkMetricTo(uint32_t neighborId) const
+{
+    // NeighborTable is keyed by Ipv4Address in the generic module (see
+    // neighbor-table.h); here we key by a synthetic address derived from
+    // the node id to avoid depending on ns-3's IP stack, which this
+    // application-layer protocol does not use (see wsn-net-device.h).
+    Ipv4Address key(neighborId);
+    if (!m_neighborTable.Has(key))
+    {
+        // Unknown neighbor: paper's fallback for hop-count/LQI defaults
+        // (C{l}=7 for unknown p_l, Eq. 1) and for LEO (R = R_max, Eq. 16).
+        NeighborEntry blank;
+        auto res = m_metric->ComputeLinkMetric(blank, m_radio);
+        return res.value;
+    }
+    const NeighborEntry& e = m_neighborTable.GetTable().at(key);
+    auto res = m_metric->ComputeLinkMetric(e, m_radio);
+    return res.value;
+}
+
+// -----------------------------------------------------------------
+// Transmission primitives
+// -----------------------------------------------------------------
+void
+WsnRoutingApp::BroadcastFrame(WsnHeader hdr, uint32_t payloadBytes)
+{
+    hdr.origType = static_cast<uint8_t>(hdr.type); // see WsnHeader::origType doc comment
+    NoteFrameSent();
+    Ptr<Packet> pkt = Create<Packet>(payloadBytes);
+    pkt->AddHeader(hdr);
+    // Broadcasts always use max power: "transmission power is always set
+    // to the maximum possible value when broadcasting" (Section 3.3).
+    double txPowerDbm =
+        m_radio.useNrf52840Energy ? SnapToNearestAvailableTxPowerDbm(m_radio.pTxMaxDbm) : m_radio.pTxMaxDbm;
+    m_device->SetTxPowerDbm(txPowerDbm);
+    m_device->Send(pkt);
+    ChargeEnergy(hdr.type, txPowerDbm, true, hdr.GetSerializedSize() + payloadBytes);
+}
+
+std::string
+WsnRoutingApp::AckKey(const WsnHeader& hdr) const
+{
+    std::ostringstream oss;
+    oss << static_cast<int>(hdr.origType) << ':' << hdr.originatorId << ':' << hdr.targetId << ':'
+        << hdr.floodId << ':' << hdr.seq;
+    return oss.str();
+}
+
+std::string
+WsnRoutingApp::ForwardKey(const WsnHeader& hdr) const
+{
+    return AckKey(hdr); // identical field set (type,orig,target,flood,seq) is sufficient
+}
+
+void
+WsnRoutingApp::SendUnicastReliable(WsnHeader hdr, uint32_t nextHopId, uint8_t attempt, uint32_t payloadBytes)
+{
+    NoteFrameSent();
+    hdr.origType = static_cast<uint8_t>(hdr.type); // see WsnHeader::origType doc comment
+    hdr.retransmissionCount = attempt;
+    hdr.isRetransmission = attempt > 0 ? 1 : 0;
+    hdr.prevHopId = m_nodeId;
+    hdr.intendedNextHopId = nextHopId; // see WsnHeader::intendedNextHopId doc comment
+
+    Ipv4Address key(nextHopId);
+    double txPowerDbm = m_radio.pTxMaxDbm;
+    if (m_neighborTable.Has(key) && m_neighborTable.Get(key).reqTxPowerKnown)
+    {
+        txPowerDbm = std::min(m_neighborTable.Get(key).reqTxPowerDbm, m_radio.pTxMaxDbm);
+    }
+    if (m_radio.useNrf52840Energy)
+    {
+        // Paper (Section 3.3): "P_TX [dBm] is set to the nearest greater
+        // or equal available transmission power by the transmitter, the
+        // same as ATPC would use."
+        txPowerDbm = SnapToNearestAvailableTxPowerDbm(txPowerDbm);
+    }
+
+    if (m_atpcMode == AtpcMode::WITHOUT_FEEDBACK)
+    {
+        // Algorithm 1, without-feedback branch: compute P_th (Eq. 9) and
+        // embed it so the receiver can run Algorithm 2 upon reception
+        // (Fig. 3c). rxAntennaGainDb is taken as 0 dB throughout this
+        // module (see README's antenna-gain note).
+        hdr.pThDbm = AlgorithmOnePreTransmission(AtpcMode::WITHOUT_FEEDBACK, 0.0, m_radio, 0.0);
+    }
+
+    Ptr<Packet> pkt = Create<Packet>(payloadBytes);
+    pkt->AddHeader(hdr);
+    m_device->SetTxPowerDbm(txPowerDbm);
+    m_device->SendTo(pkt, nextHopId); // point-to-point delivery, evaluated only for nextHopId
+    ChargeEnergy(hdr.type, txPowerDbm, true, hdr.GetSerializedSize() + payloadBytes);
+
+    std::string key2 = AckKey(hdr);
+    PendingUnicast pu;
+    pu.hdr = hdr;
+    pu.nextHopId = nextHopId;
+    pu.attempt = attempt;
+    pu.payloadBytes = payloadBytes;
+    pu.timeoutEvent = Simulator::Schedule(Seconds(m_ackTimeoutS), &WsnRoutingApp::OnAckTimeout, this, key2);
+    m_pendingAcks[key2] = pu;
+}
+
+void
+WsnRoutingApp::OnAckTimeout(std::string key)
+{
+    auto it = m_pendingAcks.find(key);
+    if (it == m_pendingAcks.end())
+    {
+        return; // already ACKed
+    }
+    PendingUnicast pu = it->second;
+    m_pendingAcks.erase(it);
+
+    Ipv4Address neighKey(pu.nextHopId);
+    m_neighborTable.UpdateDeliveryOutcome(neighKey, false, m_emaAlpha); // this attempt failed, Eq. (1)'s p_l input
+    if (pu.attempt + 1 > m_macMaxRetries)
+    {
+        // Give up: report the max retry count as the observed R_TX sample.
+        m_neighborTable.UpdateTxRetransmissions(neighKey, m_macMaxRetries, m_emaAlpha);
+        return;
+    }
+    SendUnicastReliable(pu.hdr, pu.nextHopId, pu.attempt + 1, pu.payloadBytes);
+}
+
+void
+WsnRoutingApp::HandleAck(const WsnHeader& hdr, uint32_t fromId)
+{
+    std::string key = AckKey(hdr);
+    auto it = m_pendingAcks.find(key);
+    if (it == m_pendingAcks.end())
+    {
+        return;
+    }
+    Simulator::Cancel(it->second.timeoutEvent);
+    uint8_t observedRetx = it->second.attempt;
+    m_pendingAcks.erase(it);
+    Ipv4Address neighKey(fromId);
+    m_neighborTable.UpdateTxRetransmissions(neighKey, observedRetx, m_emaAlpha);
+    m_neighborTable.UpdateDeliveryOutcome(neighKey, true, m_emaAlpha); // this attempt succeeded, Eq. (1)'s p_l input
+
+    // Algorithm 2, with-feedback branch (Fig. 3a): this ACK carries the
+    // P_TX,adj that the peer computed upon receiving our data frame
+    // (Eq. 7); apply it now to update OUR required TX power for that
+    // peer (P_TX,R). "wasRetransmitted" is approximated here as "this
+    // transmission needed at least one retry before being ACKed" -- the
+    // paper's Algorithm 2 pseudocode does not fully specify this trigger
+    // in a multi-attempt ARQ context; treating a retried-then-successful
+    // exchange as evidence of a weak link (snapping to P_TX,max) is a
+    // documented, conservative interpretation.
+    if (m_atpcMode == AtpcMode::WITH_FEEDBACK)
+    {
+        NeighborEntry& e = m_neighborTable.Get(neighKey);
+        bool wasRetransmitted = observedRetx > 0;
+        double newReq = AlgorithmTwoPostReception(wasRetransmitted,
+                                                    AtpcMode::WITH_FEEDBACK,
+                                                    e.reqTxPowerDbm,
+                                                    e.reqTxPowerKnown,
+                                                    hdr.pTxAdjDb,
+                                                    0.0,
+                                                    e.linkSignalLossDb,
+                                                    m_radio);
+        e.reqTxPowerDbm = std::clamp(newReq, m_radio.pTxMinDbm, m_radio.pTxMaxDbm);
+        e.reqTxPowerKnown = true;
+        // This is exactly "P_TX,RN -- the transmission power requested BY
+        // the neighbor" (Eq. 12): our own ReqTXP[peer], now confirmed via
+        // the peer's ACK feedback, IS what the peer is asking us to use.
+        e.pTxRequestedByNeighborDbm = e.reqTxPowerDbm;
+        e.pTxRequestedByNeighborKnown = true;
+    }
+}
+
+// -----------------------------------------------------------------
+// Reception dispatch
+// -----------------------------------------------------------------
+void
+WsnRoutingApp::OnReceive(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag tag)
+{
+    uint32_t frameBytes = packet->GetSize(); // capture before RemoveHeader consumes the header
+    WsnHeader hdr;
+    packet->RemoveHeader(hdr);
+    uint32_t fromId = hdr.prevHopId;
+
+    // Defense-in-depth guard: as of the WsnChannel::SendUnicast change
+    // (point-to-point delivery evaluated only for the intended
+    // recipient, see wsn-channel.h), this branch should now be
+    // unreachable for genuinely unicast frame types -- the channel
+    // itself only ever schedules Receive() on the intended device for
+    // those. It is kept as a cheap, harmless safety net (e.g. against a
+    // future bug that routes a unicast-typed frame through the broadcast
+    // Send() path by mistake) rather than removed. NET_SCAN/CONNECT/
+    // PATH_DISCOVERY remain genuinely broadcast and skip this check.
+    if (hdr.type != FrameType::NET_SCAN && hdr.type != FrameType::CONNECT &&
+        hdr.type != FrameType::PATH_DISCOVERY && hdr.intendedNextHopId != m_nodeId)
+    {
+        return;
+    }
+
+    // Charge the receive-side energy cost (P_R, Eq. 14) for successfully
+    // decoding this frame. Previously ChargeEnergy was only ever called
+    // with isTx=true, so reception cost was silently omitted from every
+    // energy total despite the accounting machinery already supporting it.
+    ChargeEnergy(hdr.type, 0.0, false, frameBytes);
+
+    // Opportunistically learn/update the neighbor table for this hop
+    // (Eq. 6: LSL = RSSI_m - P_TX - G_RX, with G_RX assumed 0 dB here).
+    Ipv4Address key(fromId);
+    NeighborEntry& entry = m_neighborTable.Get(key);
+    entry.linkSignalLossDb = tag.rssiDbm - tag.txPowerDbm - 0.0;
+    entry.lslKnown = true;
+    entry.lastRssiDbm = tag.rssiDbm;
+    entry.rssiKnown = true;
+    m_neighborTable.UpdateRxRetransmissions(key, hdr.retransmissionCount, m_emaAlpha); // hdr, not tag: see WsnLinkInfoTag doc
+    if (!entry.maxTxPowerKnown)
+    {
+        entry.maxTxPowerDbm = m_radio.pTxMaxDbm; // homogeneous radios assumption
+        entry.maxTxPowerKnown = true;
+    }
+
+    // Algorithm 1, with-feedback branch (Fig. 3a): "After receiving the
+    // frame, node B compares the SNR ... P_TX,adj <- SNR_th - SNR". This
+    // is computed HERE at the receiver from the frame just measured, but
+    // -- per the paper -- is only *applied* by the ORIGINAL SENDER once
+    // it is carried back in the ACK and processed there (see HandleAck's
+    // Algorithm 2 call). We only stage the value into the outgoing ACK
+    // below; we do NOT update our own neighbor-table entry for `fromId`
+    // here (a prior version incorrectly did, applying the adjustment
+    // unilaterally at the receiver instead of feeding it back via ACK).
+    double pendingTxAdjDb = 0.0;
+    if (m_atpcMode == AtpcMode::WITH_FEEDBACK && hdr.type != FrameType::ACK)
+    {
+        pendingTxAdjDb = ComputeTxPowerAdjustmentDb(tag.snrDb, m_radio);
+    }
+
+    // Algorithm 2, without-feedback branch (Fig. 3c): triggered by
+    // RECEIVING a DATA frame that itself carries P_th (Eq. 9, computed by
+    // its sender via Algorithm 1's else-branch). We update OUR OWN
+    // required TX power for `fromId` here, since this is the "adjustment
+    // of transmission power after frame reception" the algorithm
+    // describes, run by the node that will next need to transmit back.
+    if (m_atpcMode == AtpcMode::WITHOUT_FEEDBACK && hdr.type != FrameType::ACK &&
+        hdr.type != FrameType::PATH_DISCOVERY && hdr.type != FrameType::NET_SCAN &&
+        hdr.type != FrameType::CONNECT)
+    {
+        bool wasRetransmitted = hdr.isRetransmission != 0;
+        double newReq = AlgorithmTwoPostReception(wasRetransmitted,
+                                                    AtpcMode::WITHOUT_FEEDBACK,
+                                                    entry.reqTxPowerDbm,
+                                                    entry.reqTxPowerKnown,
+                                                    0.0,
+                                                    hdr.pThDbm,
+                                                    entry.linkSignalLossDb,
+                                                    m_radio);
+        entry.reqTxPowerDbm = std::clamp(newReq, m_radio.pTxMinDbm, m_radio.pTxMaxDbm);
+        entry.reqTxPowerKnown = true;
+        entry.pTxRequestedByNeighborDbm = entry.reqTxPowerDbm;
+        entry.pTxRequestedByNeighborKnown = true;
+    }
+
+    if (hdr.type == FrameType::ACK)
+    {
+        HandleAck(hdr, fromId);
+        return;
+    }
+
+    // All non-ACK frame types other than PATH_DISCOVERY/NET_SCAN/CONNECT
+    // expect an ACK back (the latter two are broadcasts -- like
+    // PATH_DISCOVERY -- and must not be ACKed by every listener).
+    if (hdr.type != FrameType::PATH_DISCOVERY && hdr.type != FrameType::NET_SCAN &&
+        hdr.type != FrameType::CONNECT)
+    {
+        WsnHeader ack;
+        ack.type = FrameType::ACK;
+        ack.origType = static_cast<uint8_t>(hdr.type); // must match the DATA frame's key, not ACK's own type
+        ack.originatorId = hdr.originatorId;
+        ack.targetId = hdr.targetId;
+        ack.floodId = hdr.floodId;
+        ack.seq = hdr.seq;
+        ack.prevHopId = m_nodeId;
+        ack.intendedNextHopId = fromId; // address the ACK back to whoever sent the DATA frame
+        ack.pTxAdjDb = pendingTxAdjDb; // Eq. (7), staged above; 0 if not in WITH_FEEDBACK mode
+        Ptr<Packet> ackPkt = Create<Packet>();
+        ackPkt->AddHeader(ack);
+        double ackPowerDbm = m_neighborTable.Has(key) && m_neighborTable.Get(key).reqTxPowerKnown
+                                  ? std::min(m_neighborTable.Get(key).reqTxPowerDbm, m_radio.pTxMaxDbm)
+                                  : m_radio.pTxMaxDbm;
+        if (m_radio.useNrf52840Energy)
+        {
+            ackPowerDbm = SnapToNearestAvailableTxPowerDbm(ackPowerDbm);
+        }
+        m_device->SetTxPowerDbm(ackPowerDbm);
+        m_device->SendTo(ackPkt, fromId); // point-to-point: evaluated only for fromId
+        ChargeEnergy(FrameType::ACK, ackPowerDbm, true, ack.GetSerializedSize());
+    }
+
+    switch (hdr.type)
+    {
+    case FrameType::PATH_DISCOVERY:
+        HandlePathDiscovery(hdr, fromId, tag);
+        break;
+    case FrameType::PATH_DISCOVERY_REPLY:
+        HandlePathDiscoveryReply(hdr, fromId, tag);
+        break;
+    case FrameType::PING:
+        HandlePing(hdr, fromId, tag);
+        break;
+    case FrameType::PING_REPLY:
+        HandlePingReply(hdr, fromId, tag);
+        break;
+    default:
+        break;
+    }
+}
+
+// -----------------------------------------------------------------
+// Path discovery (flooding), Section 3.3
+// -----------------------------------------------------------------
+void
+WsnRoutingApp::StartPathDiscovery(uint32_t targetId)
+{
+    WsnHeader hdr;
+    hdr.type = FrameType::PATH_DISCOVERY;
+    hdr.originatorId = m_nodeId;
+    hdr.targetId = targetId;
+    hdr.floodId = m_nextFloodId++;
+    hdr.prevHopId = m_nodeId;
+    hdr.accumulatedMetric = 0.0;
+    hdr.hopCount = 0;
+    m_pendingDiscoveryFloodId[targetId] = hdr.floodId;
+    m_bestFloodMetricSeen[m_nodeId][hdr.floodId] = 0.0;
+    BroadcastFrame(hdr);
+}
+
+void
+WsnRoutingApp::HandlePathDiscovery(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& /*tag*/)
+{
+    double linkMetric = LinkMetricTo(fromId);
+    double newAccumulated = hdr.accumulatedMetric + linkMetric;
+    uint32_t newHopCount = hdr.hopCount + 1;
+
+    if (newHopCount > kMaxHopCount)
+    {
+        return; // TTL exceeded, drop (see kMaxHopCount doc comment)
+    }
+
+    if (m_nodeId == hdr.targetId)
+    {
+        // Destination role: collect candidates from every distinct path
+        // that reaches us before the window closes, and reply via the
+        // best one -- for ALL metric types, not just LEO (see
+        // DiscoveryCandidate doc comment in the header for why).
+        DiscoveryCandidate& cand = m_discoveryCandidates[hdr.originatorId][hdr.floodId];
+        if (!cand.hasCandidate || newAccumulated < cand.bestMetric)
+        {
+            cand.hasCandidate = true;
+            cand.bestMetric = newAccumulated;
+            cand.bestNextHop = fromId;
+
+            RouteEntry& re = m_routingTable[hdr.originatorId];
+            re.valid = true;
+            re.nextHopId = fromId;
+            re.metric = newAccumulated;
+            re.hopCount = newHopCount;
+        }
+        if (!cand.windowScheduled)
+        {
+            cand.windowScheduled = true;
+            Simulator::Schedule(Seconds(m_discoveryWindowS),
+                                 &WsnRoutingApp::ReplyBestCandidate,
+                                 this,
+                                 hdr.originatorId,
+                                 hdr.floodId);
+        }
+        return;
+    }
+
+    // Relay role: first-arrival suppression for Hop-count/ZigBee-LQI;
+    // bounded re-relay-on-improvement for LEO (Section 4).
+    auto& seenForFlood = m_bestFloodMetricSeen[hdr.originatorId];
+    auto it = seenForFlood.find(hdr.floodId);
+    bool firstTime = (it == seenForFlood.end());
+    bool better = firstTime || (m_metricType == MetricType::LEO && newAccumulated < it->second);
+
+    if (!better)
+    {
+        return; // suppressed duplicate, matches first-seen flood suppression
+    }
+
+    auto& relayCount = m_floodRelayCount[hdr.originatorId][hdr.floodId];
+    if (!firstTime && relayCount >= kMaxRelaysPerFlood)
+    {
+        return; // re-relay budget exhausted for this flood, see kMaxRelaysPerFlood
+    }
+    relayCount++;
+    seenForFlood[hdr.floodId] = newAccumulated;
+
+    // Update the reverse route toward the flood originator.
+    RouteEntry& re = m_routingTable[hdr.originatorId];
+    re.valid = true;
+    re.nextHopId = fromId;
+    re.metric = newAccumulated;
+    re.hopCount = newHopCount;
+
+    // Continue the flood.
+    WsnHeader relay = hdr;
+    relay.prevHopId = m_nodeId;
+    relay.accumulatedMetric = newAccumulated;
+    relay.hopCount = newHopCount;
+    BroadcastFrame(relay);
+}
+
+void
+WsnRoutingApp::ReplyBestCandidate(uint32_t originatorId, uint32_t floodId)
+{
+    auto originIt = m_discoveryCandidates.find(originatorId);
+    if (originIt == m_discoveryCandidates.end())
+    {
+        return;
+    }
+    auto it = originIt->second.find(floodId);
+    if (it == originIt->second.end() || !it->second.hasCandidate)
+    {
+        return;
+    }
+    uint32_t bestNextHop = it->second.bestNextHop;
+    originIt->second.erase(it);
+
+    WsnHeader reply;
+    reply.type = FrameType::PATH_DISCOVERY_REPLY;
+    reply.originatorId = originatorId;
+    reply.targetId = m_nodeId;
+    reply.floodId = floodId;
+    reply.accumulatedMetric = 0.0;
+    reply.hopCount = 0;
+    reply.seq = 0;
+    SendUnicastReliable(reply, bestNextHop);
+}
+
+void
+WsnRoutingApp::HandlePathDiscoveryReply(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& /*tag*/)
+{
+    double linkMetric = LinkMetricTo(fromId);
+    double newAccumulated = hdr.accumulatedMetric + linkMetric;
+    uint32_t newHopCount = hdr.hopCount + 1;
+
+    if (newHopCount > kMaxHopCount)
+    {
+        // TTL exceeded: most likely a transient routing loop caused by
+        // asynchronous LEO metric updates (see kMaxHopCount doc comment).
+        // Drop rather than forward forever.
+        return;
+    }
+
+    // Build the forward route toward the discovery's destination (targetId)
+    // using the metric accumulated along the reply's path.
+    RouteEntry& re = m_routingTable[hdr.targetId];
+    re.valid = true;
+    re.nextHopId = fromId;
+    re.metric = newAccumulated;
+    re.hopCount = newHopCount;
+
+    if (m_nodeId == hdr.originatorId)
+    {
+        // Discovery complete.
+        m_pendingDiscoveryFloodId.erase(hdr.targetId);
+        return;
+    }
+
+    std::string fkey = ForwardKey(hdr);
+    if (m_alreadyForwarded.count(fkey))
+    {
+        // Duplicate delivery of a reply we already forwarded once (almost
+        // certainly because our ACK back to the previous hop was lost, not
+        // because the data failed) -- the routing-table update above is
+        // harmless to repeat, but forwarding again would compound into an
+        // exponential retry storm hop-by-hop. Do not re-send.
+        return;
+    }
+    m_alreadyForwarded.insert(fkey);
+
+    // Keep unicasting the reply toward the flood originator via our own
+    // (already-known) reverse route.
+    auto it = m_routingTable.find(hdr.originatorId);
+    if (it == m_routingTable.end() || !it->second.valid)
+    {
+        return; // should not normally happen: we relayed the forward flood
+    }
+    if (it->second.nextHopId == fromId)
+    {
+        // Immediate 2-node ping-pong: our route back to the originator
+        // currently points straight back at whoever just sent us this
+        // reply, which would bounce it forever. Drop rather than loop;
+        // this is a direct symptom of the asynchronous route updates
+        // documented at kMaxHopCount.
+        return;
+    }
+    WsnHeader relay = hdr;
+    relay.accumulatedMetric = newAccumulated;
+    relay.hopCount = newHopCount;
+    SendUnicastReliable(relay, it->second.nextHopId);
+}
+
+// -----------------------------------------------------------------
+// Ping campaign (Section 4 methodology)
+// -----------------------------------------------------------------
+void
+WsnRoutingApp::StartPingCampaign(const std::vector<uint32_t>& targets)
+{
+    m_pingTargets = targets;
+    m_pingTargetIdx = 0;
+    m_pingsSentToCurrentTarget = 0;
+    Simulator::ScheduleNow(&WsnRoutingApp::SendNextPing, this);
+}
+
+void
+WsnRoutingApp::StartConnectionPhase(uint32_t gatewayId)
+{
+    // NET_SCAN: broadcast presence announcement (Section 4's "Net scan"
+    // packet type). Kept intentionally minimal (no neighbor-list payload)
+    // since the paper does not specify NET_SCAN's exact content, only
+    // that it precedes joining.
+    WsnHeader scan;
+    scan.type = FrameType::NET_SCAN;
+    scan.originatorId = m_nodeId;
+    scan.targetId = gatewayId;
+    BroadcastFrame(scan);
+
+    // CONNECT: broadcast join announcement (Section 4's "Connect" packet
+    // type). Broadcast rather than unicast because a joining node has no
+    // route yet -- unicasting it to gatewayId would incorrectly assume
+    // single-hop reachability.
+    WsnHeader conn;
+    conn.type = FrameType::CONNECT;
+    conn.originatorId = m_nodeId;
+    conn.targetId = gatewayId;
+    BroadcastFrame(conn);
+
+    // Path discovery (Section 3.3), giving NET_SCAN/CONNECT/PATH_DISCOVERY
+    // genuinely distinct, separately-costed traffic so `energyByType` can
+    // support a Fig. 8-style breakdown (P1-4 in the review).
+    StartPathDiscovery(gatewayId);
+}
+
+void
+WsnRoutingApp::SendNextPing()
+{
+    // Skip past any exhausted targets with NO simulated-time cost (this
+    // used to burn a full extra 1 s per target transition via a
+    // reschedule-and-return pattern, silently shortening the campaign by
+    // (targets.size()-1) seconds and cutting off the last few targets
+    // before their 10 pings completed -- fixed by advancing in a tight
+    // loop here instead).
+    while (m_pingTargetIdx < m_pingTargets.size() && m_pingsSentToCurrentTarget >= kPingsPerNode)
+    {
+        m_pingTargetIdx++;
+        m_pingsSentToCurrentTarget = 0;
+    }
+    if (m_pingTargetIdx >= m_pingTargets.size())
+    {
+        return; // campaign complete
+    }
+    uint32_t target = m_pingTargets[m_pingTargetIdx];
+
+    auto rtIt = m_routingTable.find(target);
+    bool haveRoute = rtIt != m_routingTable.end() && rtIt->second.valid;
+    if (!haveRoute && m_pendingDiscoveryFloodId.find(target) == m_pendingDiscoveryFloodId.end())
+    {
+        StartPathDiscovery(target);
+    }
+
+    if (haveRoute)
+    {
+        WsnHeader hdr;
+        hdr.type = FrameType::PING;
+        hdr.originatorId = m_nodeId;
+        hdr.targetId = target;
+        hdr.seq = m_pingSeq;
+        hdr.hopCount = 0;
+        hdr.accumulatedMetric = 0.0;
+        m_stats.pingSent++;
+        SendUnicastReliable(hdr, rtIt->second.nextHopId, 0, m_pingPayloadBytes);
+        m_timeoutEvent =
+            Simulator::Schedule(Seconds(kPingTimeoutS), &WsnRoutingApp::OnPingTimeout, this, target, m_pingSeq);
+    }
+    else
+    {
+        // No route yet (discovery in flight or failed): this attempt never
+        // left the node, so it is counted separately from pingTimeouts
+        // (which now means "sent but no reply arrived in time"). Add both
+        // columns together for a Fig. 6-equivalent total failure count.
+        m_stats.pingNoRoute++;
+    }
+
+    m_pingSeq++;
+    m_pingsSentToCurrentTarget++;
+    m_pingTimer = Simulator::Schedule(Seconds(1.0), &WsnRoutingApp::SendNextPing, this);
+}
+
+void
+WsnRoutingApp::OnPingTimeout(uint32_t targetId, uint32_t seq)
+{
+    // If the corresponding PING_REPLY has already reset this event this
+    // call is a stale no-op; a real ns-3 EventId cancellation at the reply
+    // handler avoids double counting (see HandlePingReply).
+    m_stats.pingTimeouts++;
+    // Invalidate the stale route and force rediscovery on the next attempt.
+    auto it = m_routingTable.find(targetId);
+    if (it != m_routingTable.end())
+    {
+        it->second.valid = false;
+    }
+    m_pendingDiscoveryFloodId.erase(targetId);
+    StartPathDiscovery(targetId);
+}
+
+void
+WsnRoutingApp::HandlePing(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& /*tag*/)
+{
+    if (hdr.targetId != m_nodeId)
+    {
+        // Forward toward the real destination via our own route table,
+        // mirroring HandlePingReply's forwarding branch. Earlier this
+        // case simply dropped the frame, which meant ANY route requiring
+        // more than one hop from the gateway would silently fail every
+        // single ping at the first intermediate hop -- a simulation
+        // artifact, not a genuine physical-layer failure, and a likely
+        // contributor to the unexpectedly high timeout rates seen in
+        // multi-hop-heavy scenarios.
+        std::string fkey = ForwardKey(hdr);
+        if (m_alreadyForwarded.count(fkey))
+        {
+            return; // duplicate delivery of a ping we already forwarded once
+        }
+        auto it = m_routingTable.find(hdr.targetId);
+        if (it != m_routingTable.end() && it->second.valid && it->second.nextHopId != fromId)
+        {
+            m_alreadyForwarded.insert(fkey);
+            SendUnicastReliable(hdr, it->second.nextHopId);
+        }
+        return;
+    }
+    auto it = m_routingTable.find(hdr.originatorId);
+    if (it == m_routingTable.end() || !it->second.valid)
+    {
+        // We don't know the way back yet; drop (mirrors a real deployment
+        // where the reverse route should already exist from discovery).
+        return;
+    }
+    WsnHeader reply;
+    reply.type = FrameType::PING_REPLY;
+    reply.originatorId = hdr.originatorId;
+    reply.targetId = m_nodeId;
+    reply.seq = hdr.seq;
+    reply.hopCount = 0;
+    reply.accumulatedMetric = 0.0;
+    SendUnicastReliable(reply, it->second.nextHopId, 0, m_pingPayloadBytes);
+}
+
+void
+WsnRoutingApp::HandlePingReply(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& /*tag*/)
+{
+    if (hdr.originatorId != m_nodeId)
+    {
+        // Intermediate hop: forward toward the true originator via our
+        // route table (only relevant if pings ever traverse >1 hop from
+        // gateway to gateway, kept for completeness/multi-gateway setups).
+        std::string fkey = ForwardKey(hdr);
+        if (m_alreadyForwarded.count(fkey))
+        {
+            // Duplicate delivery (ACK-loss retransmission of a reply we
+            // already forwarded) -- see the identical guard in
+            // HandlePathDiscoveryReply for why re-forwarding would cause
+            // an exponential retry storm.
+            return;
+        }
+        auto it = m_routingTable.find(hdr.originatorId);
+        if (it != m_routingTable.end() && it->second.valid && it->second.nextHopId != fromId)
+        {
+            m_alreadyForwarded.insert(fkey);
+            SendUnicastReliable(hdr, it->second.nextHopId);
+        }
+        return;
+    }
+    // We are the gateway that sent the original PING: cancel its timeout.
+    Simulator::Cancel(m_timeoutEvent);
+}
+
+} // namespace leo
+} // namespace ns3

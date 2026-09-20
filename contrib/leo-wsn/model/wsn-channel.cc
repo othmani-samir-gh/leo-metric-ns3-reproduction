@@ -767,16 +767,20 @@ WsnChannel::DeliverIfSuccessful(Ptr<WsnNetDevice> sender, Ptr<WsnNetDevice> rece
     double prr = PrrFromSnrDb(snrDb);
     bool delivered = m_rng->GetValue(0.0, 1.0) <= prr;
 
+    WsnLinkInfoTag tag;
+    tag.rssiDbm = rssiDbm;
+    tag.snrDb = snrDb;
+    tag.txPowerDbm = txPowerDbm;
+    Ptr<Packet> copy = packet->Copy();
+    Mac48Address from = sender->GetAddress();
+
     // Propagation delay is neglected (paper's simulator likewise
-    // abstracts the PHY; only PRR/energy matter for the metric study).
+    // abstracts the PHY).  Both successful and failed reception attempts
+    // execute under the receiver's node context.  A failed decode is
+    // reported only to the energy-accounting callback; no protocol packet
+    // is delivered upward.
     if (delivered)
     {
-        WsnLinkInfoTag tag;
-        tag.rssiDbm = rssiDbm;
-        tag.snrDb = snrDb;
-        tag.txPowerDbm = txPowerDbm;
-        Ptr<Packet> copy = packet->Copy();
-        Mac48Address from = sender->GetAddress();
         Simulator::ScheduleWithContext(receiver->GetNodeId(),
                                        Seconds(0),
                                        &WsnNetDevice::Receive,
@@ -785,11 +789,16 @@ WsnChannel::DeliverIfSuccessful(Ptr<WsnNetDevice> sender, Ptr<WsnNetDevice> rece
                                        from,
                                        tag);
     }
-    // On failure we simply do not schedule delivery; the routing
-    // application's retransmission/timeout logic (wsn-routing-app.cc)
-    // observes this as a lost frame, consistent with the paper's PRR
-    // definition ("ratio of successfully received packets to the total
-    // number of packets sent").
+    else
+    {
+        Simulator::ScheduleWithContext(receiver->GetNodeId(),
+                                       Seconds(0),
+                                       &WsnNetDevice::ReceiveFailed,
+                                       receiver,
+                                       copy,
+                                       from,
+                                       tag);
+    }
 }
 
 } // namespace leo

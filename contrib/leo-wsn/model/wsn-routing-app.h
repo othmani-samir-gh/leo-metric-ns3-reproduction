@@ -238,6 +238,7 @@ class WsnRoutingApp : public Application
     friend class WsnRoutingAppTestPeer; // regression-test access only; no runtime behavior
 
     void OnReceive(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag tag);
+    void OnReceiveFailed(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag tag);
 
     /// Single-shot, unacknowledged broadcast (used for PATH_DISCOVERY,
     /// matching the paper: flooding needs no per-hop ACK, redundancy
@@ -296,6 +297,7 @@ class WsnRoutingApp : public Application
     /// used to compute airtime when SetPhyTiming has been called; ignored
     /// (falls back to the fixed slot-duration constants) otherwise.
     void ChargeEnergy(FrameType type, double txPowerDbm, bool isTx, uint32_t frameBytes = 0);
+    void ChargeRxListeningEnergy(FrameType type, double durationS);
 
     /// Hard cap on hop count for both PATH_DISCOVERY flood relay and
     /// PATH_DISCOVERY_REPLY forwarding. This is a standard TTL-style

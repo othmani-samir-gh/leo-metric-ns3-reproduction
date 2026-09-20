@@ -173,6 +173,7 @@ WsnRoutingApp::Configure(Ptr<WsnNetDevice> device,
     }
 
     m_device->SetReceiveCallback(MakeCallback(&WsnRoutingApp::OnReceive, this));
+    m_device->SetReceiveFailureCallback(MakeCallback(&WsnRoutingApp::OnReceiveFailed, this));
 
     // Simulator::Destroy() is the authoritative end-of-run boundary in
     // scratch/leo-topologies.cc. Reset the shared safety counter there so
@@ -263,6 +264,7 @@ WsnRoutingApp::DoDispose()
     if (m_device)
     {
         m_device->SetReceiveCallback(WsnReceiveCallback());
+        m_device->SetReceiveFailureCallback(WsnReceiveCallback());
         m_device = nullptr;
     }
     m_metric.reset();
@@ -322,6 +324,24 @@ WsnRoutingApp::ChargeEnergy(FrameType type, double txPowerDbm, bool isTx, uint32
     NS_ABORT_MSG_IF(!std::isfinite(energyMWs) || energyMWs < 0.0,
                      "ChargeEnergy: non-physical per-frame energy computed ("
                          << energyMWs << " mWs, powerMw=" << powerMw << ", durationS=" << durationS << ")");
+    m_stats.energyConsumedMWs += energyMWs;
+    m_stats.energyByType[type] += energyMWs;
+    m_device->AddEnergyMWs(energyMWs);
+}
+
+void
+WsnRoutingApp::ChargeRxListeningEnergy(FrameType type, double durationS)
+{
+    NS_ABORT_MSG_IF(!std::isfinite(durationS) || durationS < 0.0,
+                    "ChargeRxListeningEnergy: invalid duration " << durationS);
+
+    double powerMw = m_radio.useNrf52840Energy
+                         ? Nrf52840RxPowerMw(m_bitrateBps, m_radio.hfxoStandbyCurrentMa)
+                         : m_radio.rxPowerPenaltyMw;
+    double energyMWs = powerMw * durationS;
+    NS_ABORT_MSG_IF(!std::isfinite(energyMWs) || energyMWs < 0.0,
+                    "ChargeRxListeningEnergy: non-physical energy " << energyMWs);
+
     m_stats.energyConsumedMWs += energyMWs;
     m_stats.energyByType[type] += energyMWs;
     m_device->AddEnergyMWs(energyMWs);
@@ -440,6 +460,12 @@ WsnRoutingApp::OnAckTimeout(std::string key)
     PendingUnicast pu = it->second;
     m_pendingAcks.erase(it);
 
+    // The sender kept its receiver on while waiting for an ACK that never
+    // arrived.  Successful ACK frame reception is already charged in
+    // OnReceive(); this explicitly accounts only the missing-ACK listen
+    // window that was previously free.
+    ChargeRxListeningEnergy(FrameType::ACK, m_ackTimeoutS);
+
     Ipv4Address neighKey(pu.nextHopId);
     m_neighborTable.UpdateDeliveryOutcome(neighKey, false, m_emaAlpha); // this attempt failed, Eq. (1)'s p_l input
     if (pu.attempt + 1 > m_macMaxRetries)
@@ -512,6 +538,20 @@ WsnRoutingApp::HandleAck(const WsnHeader& hdr, uint32_t fromId)
 // -----------------------------------------------------------------
 // Reception dispatch
 // -----------------------------------------------------------------
+void
+WsnRoutingApp::OnReceiveFailed(Ptr<Packet> packet, Mac48Address /*from*/, WsnLinkInfoTag /*tag*/)
+{
+    uint32_t frameBytes = packet->GetSize();
+    WsnHeader hdr;
+    packet->RemoveHeader(hdr);
+
+    // For unicast the channel calls this only on the intended receiver.
+    // Broadcast frames are listened to by every attached receiver.
+    // A failed decode consumes radio RX energy but MUST NOT update
+    // neighbor/routing/ATPC state or emit an ACK.
+    ChargeEnergy(hdr.type, 0.0, false, frameBytes);
+}
+
 void
 WsnRoutingApp::OnReceive(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag tag)
 {
@@ -620,13 +660,13 @@ WsnRoutingApp::OnReceive(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag t
         ack.pTxAdjDb = pendingTxAdjDb; // Eq. (7), staged above; 0 if not in WITH_FEEDBACK mode
         Ptr<Packet> ackPkt = Create<Packet>();
         ackPkt->AddHeader(ack);
-        double ackPowerDbm = m_neighborTable.Has(key) && m_neighborTable.Get(key).reqTxPowerKnown
-                                  ? std::min(m_neighborTable.Get(key).reqTxPowerDbm, m_radio.pTxMaxDbm)
-                                  : m_radio.pTxMaxDbm;
-        if (m_radio.useNrf52840Energy)
-        {
-            ackPowerDbm = SnapToNearestAvailableTxPowerDbm(ackPowerDbm);
-        }
+        double requestedAckPowerDbm =
+            m_neighborTable.Has(key) && m_neighborTable.Get(key).reqTxPowerKnown
+                ? std::clamp(m_neighborTable.Get(key).reqTxPowerDbm,
+                             m_radio.pTxMinDbm,
+                             m_radio.pTxMaxDbm)
+                : m_radio.pTxMaxDbm;
+        double ackPowerDbm = RealizeNrf52840TxPowerDbm(requestedAckPowerDbm);
         m_device->SetTxPowerDbm(ackPowerDbm);
         m_device->SendTo(ackPkt, fromId); // point-to-point: evaluated only for fromId
         ChargeEnergy(FrameType::ACK, ackPowerDbm, true, ack.GetSerializedSize());

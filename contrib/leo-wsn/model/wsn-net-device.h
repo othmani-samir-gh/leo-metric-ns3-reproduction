@@ -89,6 +89,7 @@ class WsnNetDevice : public Object
     double GetMaxTxPowerDbm() const;
 
     void SetReceiveCallback(WsnReceiveCallback cb);
+    void SetReceiveFailureCallback(WsnReceiveCallback cb);
 
     /// Broadcast \p packet at the device's current TX power.
     void Send(Ptr<Packet> packet);
@@ -101,6 +102,11 @@ class WsnNetDevice : public Object
 
     /// Invoked by WsnChannel on successful delivery.
     void Receive(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag tag);
+
+    /// Invoked by WsnChannel when the receiver listened for the frame but
+    /// decoding failed (PRR/CRC outcome).  The routing application uses
+    /// this only for RX-energy accounting; no protocol state is updated.
+    void ReceiveFailed(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag tag);
 
     /// Energy accounting: mWs consumed so far by this device (TX + RX side).
     double GetEnergyConsumedMWs() const;
@@ -116,6 +122,7 @@ class WsnNetDevice : public Object
     double m_txPowerDbm{0.0};
     double m_maxTxPowerDbm{8.0};
     WsnReceiveCallback m_receiveCallback;
+    WsnReceiveCallback m_receiveFailureCallback;
     double m_energyConsumedMWs{0.0};
 };
 

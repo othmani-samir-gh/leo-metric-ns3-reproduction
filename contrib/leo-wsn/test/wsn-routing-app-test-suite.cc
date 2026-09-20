@@ -37,7 +37,8 @@ class WsnRoutingAppTestPeer
 
     static uint32_t PendingDiscoveryFloodId(const WsnRoutingApp& app, uint32_t target)
     {
-        return app.m_pendingDiscoveryFloodId.at(target);
+        auto it = app.m_pendingDiscoveryFloodId.find(target);
+        return it == app.m_pendingDiscoveryFloodId.end() ? 0u : it->second;
     }
 
     static void SetPendingDiscovery(WsnRoutingApp& app, uint32_t target, uint32_t floodId)

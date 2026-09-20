@@ -928,8 +928,8 @@ class ChannelStreamIdentityTest : public TestCase
         NS_TEST_EXPECT_MSG_EQ(perturbed.size(),
                               64u,
                               "perturbed fixture must record every channel roll");
-        NS_TEST_EXPECT_MSG_EQ(baseline,
-                              perturbed,
+        NS_TEST_EXPECT_MSG_EQ(baseline == perturbed,
+                              true,
                               "explicit stream identity must make channel draws independent of unrelated RNG allocations");
     }
 };

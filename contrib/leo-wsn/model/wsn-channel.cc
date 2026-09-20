@@ -648,7 +648,7 @@ TypeId
 WsnChannel::GetTypeId()
 {
     static TypeId tid = TypeId("ns3::leo::WsnChannel")
-                             .SetParent<Channel>()
+                             .SetParent<Object>()
                              .SetGroupName("LeoWsn")
                              .AddConstructor<WsnChannel>();
     return tid;
@@ -680,7 +680,7 @@ WsnChannel::DoDispose()
     m_devices.clear();
     m_linkSnrPenaltyDb.clear();
     m_rng = nullptr;
-    Channel::DoDispose();
+    Object::DoDispose();
 }
 
 void
@@ -695,13 +695,10 @@ WsnChannel::GetNDevices() const
     return m_devices.size();
 }
 
-Ptr<NetDevice>
-WsnChannel::GetDevice(std::size_t /*i*/) const
+Ptr<WsnNetDevice>
+WsnChannel::GetWsnDevice(std::size_t i) const
 {
-    // WsnNetDevice deliberately does not subclass ns3::NetDevice (see
-    // wsn-net-device.h); this override exists only to satisfy the
-    // ns3::Channel interface and is not used by this module.
-    return nullptr;
+    return i < m_devices.size() ? m_devices[i] : nullptr;
 }
 
 void

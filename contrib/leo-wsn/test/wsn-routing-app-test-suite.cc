@@ -950,6 +950,18 @@ class ChannelContractTest : public TestCase
         NS_TEST_EXPECT_MSG_EQ((std::is_base_of_v<Channel, WsnChannel>),
                               false,
                               "WsnChannel must use an honest Object contract instead of a Channel override returning nullptr devices");
+
+        auto channel = CreateObject<WsnChannel>();
+        auto dev = CreateObject<WsnNetDevice>();
+        channel->Add(dev);
+        NS_TEST_EXPECT_MSG_EQ(channel->GetWsnDevice(0) == dev,
+                              true,
+                              "typed accessor must return the attached WsnNetDevice");
+        NS_TEST_EXPECT_MSG_EQ(channel->GetWsnDevice(1) == nullptr,
+                              true,
+                              "typed accessor must fail safely for an out-of-range index");
+        channel->Dispose();
+        dev->Dispose();
     }
 };
 

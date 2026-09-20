@@ -34,7 +34,7 @@
 #ifndef LEO_WSN_CHANNEL_H
 #define LEO_WSN_CHANNEL_H
 
-#include <ns3/channel.h>
+#include <ns3/object.h>
 #include <ns3/mobility-model.h>
 #include <ns3/packet.h>
 #include <ns3/random-variable-stream.h>
@@ -84,7 +84,7 @@ double LinkSignalLossDb(double distanceM, double environmentFactor, double signa
  * success/failure per receiver -- i.e. per link, matching the paper's
  * link-level PRR/PER framing.
  */
-class WsnChannel : public Channel
+class WsnChannel : public Object
 {
   public:
     static TypeId GetTypeId();
@@ -96,8 +96,11 @@ class WsnChannel : public Channel
 
     void Add(Ptr<WsnNetDevice> dev);
 
-    std::size_t GetNDevices() const override;
-    Ptr<NetDevice> GetDevice(std::size_t i) const override;
+    std::size_t GetNDevices() const;
+
+    /// Direct accessor for this abstraction's actual device type.
+    /// Returns nullptr when i is out of range.
+    Ptr<WsnNetDevice> GetWsnDevice(std::size_t i) const;
 
     /**
      * \brief Called by a WsnNetDevice to broadcast \p packet at

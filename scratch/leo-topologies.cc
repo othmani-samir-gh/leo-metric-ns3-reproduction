@@ -385,10 +385,57 @@ main(int argc, char* argv[])
                  discoveryWindowS);
     cmd.Parse(argc, argv);
 
+    // R3 fail-fast configuration validation. Reject invalid/unsafe inputs
+    // before opening output files, creating nodes, or scheduling events.
+    NS_ABORT_MSG_IF(nNodes < 2, "--nNodes must be >= 2, got " << nNodes);
+    NS_ABORT_MSG_IF(runs == 0, "--runs must be >= 1");
+    NS_ABORT_MSG_IF(!std::isfinite(spacingM) || spacingM <= 0.0,
+                    "--spacingM must be finite and > 0, got " << spacingM);
+    NS_ABORT_MSG_IF(!std::isfinite(envFactor) || envFactor <= 0.0,
+                    "--envFactor must be finite and > 0, got " << envFactor);
+    NS_ABORT_MSG_IF(!std::isfinite(backgroundNoiseDbm),
+                    "--backgroundNoiseDbm must be finite");
+    NS_ABORT_MSG_IF(!std::isfinite(interferenceDb) || interferenceDb < 0.0,
+                    "--interferenceDb must be finite and >= 0, got " << interferenceDb);
+    NS_ABORT_MSG_IF(!std::isfinite(bitrateBps) || bitrateBps <= 0.0,
+                    "--bitrateBps must be finite and > 0, got " << bitrateBps);
+    NS_ABORT_MSG_IF(!std::isfinite(radioOverheadS) || radioOverheadS < 0.0,
+                    "--radioOverheadS must be finite and >= 0, got " << radioOverheadS);
     NS_ABORT_MSG_IF(macMaxRetries > kMaxRetransmissionField,
                     "--macMaxRetries must be <= "
                         << static_cast<uint32_t>(kMaxRetransmissionField)
                         << " so it fits the protocol retransmission field");
+    NS_ABORT_MSG_IF(!std::isfinite(ackTimeoutS) || ackTimeoutS <= 0.0,
+                    "--ackTimeoutS must be finite and > 0, got " << ackTimeoutS);
+    NS_ABORT_MSG_IF(!std::isfinite(discoveryTimeoutS) || discoveryTimeoutS <= 0.0,
+                    "--discoveryTimeoutS must be finite and > 0, got " << discoveryTimeoutS);
+    NS_ABORT_MSG_IF(!std::isfinite(mobilityBoxFrac) || mobilityBoxFrac < 0.0,
+                    "--mobilityBoxFrac must be finite and >= 0, got " << mobilityBoxFrac);
+    NS_ABORT_MSG_IF(!std::isfinite(mobilitySpeedMin) ||
+                        !std::isfinite(mobilitySpeedMax) ||
+                        mobilitySpeedMin < 0.0 ||
+                        mobilitySpeedMax < mobilitySpeedMin,
+                    "mobility speed range must be finite with 0 <= min <= max");
+    NS_ABORT_MSG_IF(!std::isfinite(mobilityPauseMin) ||
+                        !std::isfinite(mobilityPauseMax) ||
+                        mobilityPauseMin < 0.0 ||
+                        mobilityPauseMax < mobilityPauseMin,
+                    "mobility pause range must be finite with 0 <= min <= max");
+    NS_ABORT_MSG_IF(!std::isfinite(mobilityWarmupS) || mobilityWarmupS < 0.0,
+                    "--mobilityWarmupS must be finite and >= 0, got " << mobilityWarmupS);
+    NS_ABORT_MSG_IF(mobilityDiagnostics &&
+                        (!std::isfinite(mobilityDiagnosticsPeriodS) ||
+                         mobilityDiagnosticsPeriodS <= 0.0),
+                    "--mobilityDiagnosticsPeriodS must be finite and > 0 when diagnostics are enabled");
+    NS_ABORT_MSG_IF(!std::isfinite(emaAlpha) || emaAlpha < 0.0 || emaAlpha > 1.0,
+                    "--emaAlpha must be finite and in [0,1], got " << emaAlpha);
+    NS_ABORT_MSG_IF(!std::isfinite(discoveryWindowS) || discoveryWindowS < 0.0,
+                    "--discoveryWindowS must be finite and >= 0, got " << discoveryWindowS);
+    NS_ABORT_MSG_IF(outCsv.empty(), "--outCsv must not be empty");
+    NS_ABORT_MSG_IF(mobilityDiagnostics && mobilityDiagCsv.empty(),
+                    "--mobilityDiagCsv must not be empty when diagnostics are enabled");
+    NS_ABORT_MSG_IF(mobilityDiagnostics && outCsv == mobilityDiagCsv,
+                    "--outCsv and --mobilityDiagCsv must be different files");
 
     MetricType metricType = ParseMetric(metricStr);
 
@@ -406,6 +453,8 @@ main(int argc, char* argv[])
         writeHeader = !existing.good() || existing.peek() == std::ifstream::traits_type::eof();
     }
     std::ofstream csv(outCsv, std::ios::app);
+    NS_ABORT_MSG_IF(!csv.is_open() || !csv.good(),
+                    "failed to open output CSV for append: " << outCsv);
     if (writeHeader)
     {
         csv << "layout,envFactor,metric,interference,run,totalEnergyMWs,pingTimeouts,pingNoRoute,pingSent";
@@ -425,6 +474,8 @@ main(int argc, char* argv[])
             writeDiagHeader = !existingDiag.good() || existingDiag.peek() == std::ifstream::traits_type::eof();
         }
         diagCsv.open(mobilityDiagCsv, std::ios::app);
+        NS_ABORT_MSG_IF(!diagCsv.is_open() || !diagCsv.good(),
+                        "failed to open mobility diagnostics CSV for append: " << mobilityDiagCsv);
         if (writeDiagHeader)
         {
             diagCsv << "layout,envFactor,metric,mobility,run,simTimeS,avgNodeDegree\n";

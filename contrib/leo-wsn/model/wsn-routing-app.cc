@@ -184,6 +184,14 @@ WsnRoutingApp::Configure(Ptr<WsnNetDevice> device,
 void
 WsnRoutingApp::SetTiming(double txSlotDurationS, double rxSlotDurationS, uint8_t macMaxRetries)
 {
+    NS_ABORT_MSG_IF(!std::isfinite(txSlotDurationS) || txSlotDurationS <= 0.0,
+                    "TX slot duration must be finite and > 0, got " << txSlotDurationS);
+    NS_ABORT_MSG_IF(!std::isfinite(rxSlotDurationS) || rxSlotDurationS <= 0.0,
+                    "RX slot duration must be finite and > 0, got " << rxSlotDurationS);
+    NS_ABORT_MSG_IF(macMaxRetries > kMaxRetransmissionField,
+                    "MAC retry cap must fit the protocol retransmission field [0,"
+                        << static_cast<uint32_t>(kMaxRetransmissionField)
+                        << "], got " << static_cast<uint32_t>(macMaxRetries));
     m_txSlotDurationS = txSlotDurationS;
     m_rxSlotDurationS = rxSlotDurationS;
     m_macMaxRetries = macMaxRetries;
@@ -200,6 +208,10 @@ WsnRoutingApp::SetAckTimeoutS(double seconds)
 void
 WsnRoutingApp::SetPhyTiming(double bitrateBps, double radioOverheadS)
 {
+    NS_ABORT_MSG_IF(!std::isfinite(bitrateBps) || bitrateBps <= 0.0,
+                    "PHY bitrate must be finite and > 0, got " << bitrateBps);
+    NS_ABORT_MSG_IF(!std::isfinite(radioOverheadS) || radioOverheadS < 0.0,
+                    "radio overhead must be finite and >= 0, got " << radioOverheadS);
     m_bitrateBps = bitrateBps;
     m_radioOverheadS = radioOverheadS;
     m_usePacketSizeTiming = true;
@@ -214,14 +226,16 @@ WsnRoutingApp::SetPingPayloadBytes(uint32_t bytes)
 void
 WsnRoutingApp::SetEmaAlpha(double alpha)
 {
-    NS_ABORT_MSG_IF(alpha < 0.0 || alpha > 1.0, "EMA alpha must be in [0,1], got " << alpha);
+    NS_ABORT_MSG_IF(!std::isfinite(alpha) || alpha < 0.0 || alpha > 1.0,
+                    "EMA alpha must be finite and in [0,1], got " << alpha);
     m_emaAlpha = alpha;
 }
 
 void
 WsnRoutingApp::SetDiscoveryWindowS(double seconds)
 {
-    NS_ABORT_MSG_IF(seconds < 0.0, "discovery window must be >= 0, got " << seconds);
+    NS_ABORT_MSG_IF(!std::isfinite(seconds) || seconds < 0.0,
+                    "discovery window must be finite and >= 0, got " << seconds);
     m_discoveryWindowS = seconds;
 }
 

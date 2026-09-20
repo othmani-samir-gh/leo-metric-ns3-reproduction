@@ -3,6 +3,7 @@
 #include "ns3/test.h"
 #include "ns3/mobility-module.h"
 #include "ns3/node-container.h"
+#include "ns3/rng-seed-manager.h"
 
 #include <limits>
 

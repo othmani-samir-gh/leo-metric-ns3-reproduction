@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="$(cd "$(dirname "\${BASH_SOURCE[0]}")/../.." && pwd)"
-NS3="\${NS3_ROOT:-/home/pharmaco/projects/ns-3.48-leo-r1}"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+NS3="${NS3_ROOT:-/home/pharmaco/projects/ns-3.48-leo-r1}"
 OUT="$REPO/build/r5"
 PROV="$REPO/results/v1.1.0/provenance"
 EXPECTED_MANIFEST="f36d0510e3dbb0d3c9adffa565c74ad2c5026b77fa1cf04b411ba46f49f4c520"

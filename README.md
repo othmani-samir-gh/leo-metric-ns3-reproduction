@@ -1,7 +1,9 @@
 # LEO metric — ns-3 reconstruction and reproduction study
 
-[![DOI](https://img.shields.io/badge/DOI-pending-lightgrey.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22859623.svg)](https://doi.org/10.5281/zenodo.22859623)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+
 
 An independent ns-3 reconstruction of the **LEO** (Low Energy and Overhead)
 wireless-sensor-network routing metric, with hop-count and two ZigBee LQI

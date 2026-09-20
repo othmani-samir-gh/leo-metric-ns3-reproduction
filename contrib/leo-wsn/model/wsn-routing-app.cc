@@ -206,6 +206,14 @@ WsnRoutingApp::SetDiscoveryWindowS(double seconds)
 }
 
 void
+WsnRoutingApp::SetDiscoveryTimeoutS(double seconds)
+{
+    NS_ABORT_MSG_IF(!std::isfinite(seconds) || seconds <= 0.0,
+                    "discovery timeout must be finite and > 0, got " << seconds);
+    m_discoveryTimeoutS = seconds;
+}
+
+void
 WsnRoutingApp::StartApplication()
 {
 }
@@ -214,7 +222,16 @@ void
 WsnRoutingApp::StopApplication()
 {
     Simulator::Cancel(m_pingTimer);
-    Simulator::Cancel(m_timeoutEvent);
+    for (auto& kv : m_pingTimeoutEvents)
+    {
+        Simulator::Cancel(kv.second);
+    }
+    m_pingTimeoutEvents.clear();
+    for (auto& kv : m_discoveryTimeoutEvents)
+    {
+        Simulator::Cancel(kv.second);
+    }
+    m_discoveryTimeoutEvents.clear();
     for (auto& kv : m_pendingAcks)
     {
         Simulator::Cancel(kv.second.timeoutEvent);
@@ -282,7 +299,7 @@ WsnRoutingApp::ChargeEnergy(FrameType type, double txPowerDbm, bool isTx, uint32
 // -----------------------------------------------------------------
 // Link metric helper
 // -----------------------------------------------------------------
-double
+LinkMetricResult
 WsnRoutingApp::LinkMetricTo(uint32_t neighborId) const
 {
     // NeighborTable is keyed by Ipv4Address in the generic module (see
@@ -295,12 +312,10 @@ WsnRoutingApp::LinkMetricTo(uint32_t neighborId) const
         // Unknown neighbor: paper's fallback for hop-count/LQI defaults
         // (C{l}=7 for unknown p_l, Eq. 1) and for LEO (R = R_max, Eq. 16).
         NeighborEntry blank;
-        auto res = m_metric->ComputeLinkMetric(blank, m_radio);
-        return res.value;
+        return m_metric->ComputeLinkMetric(blank, m_radio);
     }
     const NeighborEntry& e = m_neighborTable.GetTable().at(key);
-    auto res = m_metric->ComputeLinkMetric(e, m_radio);
-    return res.value;
+    return m_metric->ComputeLinkMetric(e, m_radio);
 }
 
 // -----------------------------------------------------------------
@@ -603,6 +618,16 @@ WsnRoutingApp::OnReceive(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag t
 void
 WsnRoutingApp::StartPathDiscovery(uint32_t targetId)
 {
+    // A target may only have one locally-current discovery transaction.
+    // If a caller explicitly restarts it, cancel the previous liveness
+    // timer before replacing the authoritative flood id.
+    auto oldTimeout = m_discoveryTimeoutEvents.find(targetId);
+    if (oldTimeout != m_discoveryTimeoutEvents.end())
+    {
+        Simulator::Cancel(oldTimeout->second);
+        m_discoveryTimeoutEvents.erase(oldTimeout);
+    }
+
     WsnHeader hdr;
     hdr.type = FrameType::PATH_DISCOVERY;
     hdr.originatorId = m_nodeId;
@@ -613,14 +638,39 @@ WsnRoutingApp::StartPathDiscovery(uint32_t targetId)
     hdr.hopCount = 0;
     m_pendingDiscoveryFloodId[targetId] = hdr.floodId;
     m_bestFloodMetricSeen[m_nodeId][hdr.floodId] = 0.0;
+    m_discoveryTimeoutEvents[targetId] =
+        Simulator::Schedule(Seconds(m_discoveryTimeoutS),
+                            &WsnRoutingApp::OnDiscoveryTimeout,
+                            this,
+                            targetId,
+                            hdr.floodId);
     BroadcastFrame(hdr);
+}
+
+void
+WsnRoutingApp::OnDiscoveryTimeout(uint32_t targetId, uint32_t floodId)
+{
+    // Transaction-safe timeout: a timer belonging to an older flood must
+    // never clear a newer discovery for the same target.
+    auto pending = m_pendingDiscoveryFloodId.find(targetId);
+    if (pending == m_pendingDiscoveryFloodId.end() || pending->second != floodId)
+    {
+        return;
+    }
+
+    m_pendingDiscoveryFloodId.erase(pending);
+    m_discoveryTimeoutEvents.erase(targetId);
 }
 
 void
 WsnRoutingApp::HandlePathDiscovery(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& /*tag*/)
 {
-    double linkMetric = LinkMetricTo(fromId);
-    double newAccumulated = hdr.accumulatedMetric + linkMetric;
+    LinkMetricResult link = LinkMetricTo(fromId);
+    if (!link.linkUsable)
+    {
+        return; // Eq. (12)-(13): one-way/unusable links cannot enter a route.
+    }
+    double newAccumulated = hdr.accumulatedMetric + link.value;
     uint32_t newHopCount = hdr.hopCount + 1;
 
     if (newHopCount > kMaxHopCount)
@@ -724,20 +774,43 @@ WsnRoutingApp::ReplyBestCandidate(uint32_t originatorId, uint32_t floodId)
 void
 WsnRoutingApp::HandlePathDiscoveryReply(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& /*tag*/)
 {
-    double linkMetric = LinkMetricTo(fromId);
-    double newAccumulated = hdr.accumulatedMetric + linkMetric;
+    // Transaction identity is checked BEFORE any routing-table mutation.
+    // At the originator, only the exact currently pending flood may
+    // complete discovery. At a relay, require that this node actually
+    // relayed the same flood and has not since observed a newer flood from
+    // that originator.
+    if (m_nodeId == hdr.originatorId)
+    {
+        auto pending = m_pendingDiscoveryFloodId.find(hdr.targetId);
+        if (pending == m_pendingDiscoveryFloodId.end() || pending->second != hdr.floodId)
+        {
+            return;
+        }
+    }
+    else
+    {
+        auto seenOrigin = m_bestFloodMetricSeen.find(hdr.originatorId);
+        if (seenOrigin == m_bestFloodMetricSeen.end() ||
+            seenOrigin->second.find(hdr.floodId) == seenOrigin->second.end() ||
+            seenOrigin->second.rbegin()->first != hdr.floodId)
+        {
+            return;
+        }
+    }
+
+    LinkMetricResult link = LinkMetricTo(fromId);
+    if (!link.linkUsable)
+    {
+        return; // Eq. (12)-(13): reply path must also remain bidirectional.
+    }
+    double newAccumulated = hdr.accumulatedMetric + link.value;
     uint32_t newHopCount = hdr.hopCount + 1;
 
     if (newHopCount > kMaxHopCount)
     {
-        // TTL exceeded: most likely a transient routing loop caused by
-        // asynchronous LEO metric updates (see kMaxHopCount doc comment).
-        // Drop rather than forward forever.
         return;
     }
 
-    // Build the forward route toward the discovery's destination (targetId)
-    // using the metric accumulated along the reply's path.
     RouteEntry& re = m_routingTable[hdr.targetId];
     re.valid = true;
     re.nextHopId = fromId;
@@ -746,7 +819,12 @@ WsnRoutingApp::HandlePathDiscoveryReply(WsnHeader hdr, uint32_t fromId, const Ws
 
     if (m_nodeId == hdr.originatorId)
     {
-        // Discovery complete.
+        auto timeout = m_discoveryTimeoutEvents.find(hdr.targetId);
+        if (timeout != m_discoveryTimeoutEvents.end())
+        {
+            Simulator::Cancel(timeout->second);
+            m_discoveryTimeoutEvents.erase(timeout);
+        }
         m_pendingDiscoveryFloodId.erase(hdr.targetId);
         return;
     }
@@ -864,7 +942,8 @@ WsnRoutingApp::SendNextPing()
         hdr.accumulatedMetric = 0.0;
         m_stats.pingSent++;
         SendUnicastReliable(hdr, rtIt->second.nextHopId, 0, m_pingPayloadBytes);
-        m_timeoutEvent =
+        auto pingKey = std::make_pair(target, m_pingSeq);
+        m_pingTimeoutEvents[pingKey] =
             Simulator::Schedule(Seconds(kPingTimeoutS), &WsnRoutingApp::OnPingTimeout, this, target, m_pingSeq);
     }
     else
@@ -884,17 +963,23 @@ WsnRoutingApp::SendNextPing()
 void
 WsnRoutingApp::OnPingTimeout(uint32_t targetId, uint32_t seq)
 {
-    // If the corresponding PING_REPLY has already reset this event this
-    // call is a stale no-op; a real ns-3 EventId cancellation at the reply
-    // handler avoids double counting (see HandlePingReply).
+    auto pingKey = std::make_pair(targetId, seq);
+    auto timeout = m_pingTimeoutEvents.find(pingKey);
+    if (timeout == m_pingTimeoutEvents.end())
+    {
+        return; // matching reply already completed this exact transaction
+    }
+    m_pingTimeoutEvents.erase(timeout);
+
     m_stats.pingTimeouts++;
-    // Invalidate the stale route and force rediscovery on the next attempt.
     auto it = m_routingTable.find(targetId);
     if (it != m_routingTable.end())
     {
         it->second.valid = false;
     }
-    m_pendingDiscoveryFloodId.erase(targetId);
+
+    // StartPathDiscovery is restart-safe: it cancels any older discovery
+    // timeout and replaces the target's authoritative flood id.
     StartPathDiscovery(targetId);
 }
 
@@ -966,8 +1051,17 @@ WsnRoutingApp::HandlePingReply(WsnHeader hdr, uint32_t fromId, const WsnLinkInfo
         }
         return;
     }
-    // We are the gateway that sent the original PING: cancel its timeout.
-    Simulator::Cancel(m_timeoutEvent);
+    // We are the gateway that sent the original PING. Only the exact
+    // (target,seq) transaction may cancel its timeout; a delayed reply for
+    // an older ping is otherwise a harmless stale packet.
+    auto pingKey = std::make_pair(hdr.targetId, hdr.seq);
+    auto timeout = m_pingTimeoutEvents.find(pingKey);
+    if (timeout == m_pingTimeoutEvents.end())
+    {
+        return;
+    }
+    Simulator::Cancel(timeout->second);
+    m_pingTimeoutEvents.erase(timeout);
 }
 
 } // namespace leo

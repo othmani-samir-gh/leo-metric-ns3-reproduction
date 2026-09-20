@@ -72,7 +72,7 @@ class WsnRoutingAppTestPeer
 
     static EventId PingTimeoutEvent(const WsnRoutingApp& app)
     {
-        return app.m_timeoutEvent;
+        return app.m_pingTimeoutEvents.empty() ? EventId() : app.m_pingTimeoutEvents.begin()->second;
     }
 };
 

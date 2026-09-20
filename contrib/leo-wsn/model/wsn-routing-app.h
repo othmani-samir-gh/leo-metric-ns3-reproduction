@@ -47,6 +47,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ns3
@@ -212,6 +213,11 @@ class WsnRoutingApp : public Application
     void SetEmaAlpha(double alpha);
     void SetDiscoveryWindowS(double seconds);
 
+    /// Liveness timeout for an outstanding path-discovery transaction.
+    /// The source paper does not publish this value; it is a reconstruction
+    /// safety parameter and must be frozen/swept in the experiment manifest.
+    void SetDiscoveryTimeoutS(double seconds);
+
     /// Connection-phase entry point (Section 4: "each node ... performed
     /// path discovery one time" during the connection phase, itself
     /// preceded by scanning/joining). Broadcasts one NET_SCAN then one
@@ -277,13 +283,14 @@ class WsnRoutingApp : public Application
     /// sends the reply via whichever candidate route had the best
     /// (lowest) accumulated metric. See kDiscoveryWindowS.
     void ReplyBestCandidate(uint32_t originatorId, uint32_t floodId);
+    void OnDiscoveryTimeout(uint32_t targetId, uint32_t floodId);
     void HandlePing(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& tag);
     void HandlePingReply(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& tag);
 
     void SendNextPing();
     void OnPingTimeout(uint32_t targetId, uint32_t seq);
 
-    double LinkMetricTo(uint32_t neighborId) const;
+    LinkMetricResult LinkMetricTo(uint32_t neighborId) const;
     /// \param frameBytes serialized size of the frame (header + payload),
     /// used to compute airtime when SetPhyTiming has been called; ignored
     /// (falls back to the fixed slot-duration constants) otherwise.
@@ -342,6 +349,8 @@ class WsnRoutingApp : public Application
 
     uint32_t m_nextFloodId{1};
     std::map<uint32_t, uint32_t> m_pendingDiscoveryFloodId; // targetId -> floodId in flight
+    std::map<uint32_t, EventId> m_discoveryTimeoutEvents;    // targetId -> timeout for current flood
+    double m_discoveryTimeoutS{1.0}; //!< reconstruction liveness guard; source value unpublished
 
     std::vector<uint32_t> m_pingTargets;
     std::size_t m_pingTargetIdx{0};
@@ -349,7 +358,7 @@ class WsnRoutingApp : public Application
     static constexpr uint32_t kPingsPerNode = 10;
     uint32_t m_pingsSentToCurrentTarget{0};
     EventId m_pingTimer;
-    EventId m_timeoutEvent;
+    std::map<std::pair<uint32_t, uint32_t>, EventId> m_pingTimeoutEvents; // (targetId, seq) -> timeout
 
     NodeStats m_stats;
 

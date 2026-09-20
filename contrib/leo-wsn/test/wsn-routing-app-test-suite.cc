@@ -121,6 +121,11 @@ class WsnRoutingAppTestPeer
     {
         app.OnReceive(packet, from, tag);
     }
+
+    static LinkMetricResult LinkMetric(WsnRoutingApp& app, uint32_t neighborId)
+    {
+        return app.LinkMetricTo(neighborId);
+    }
 };
 
 static Ptr<WsnRoutingApp>
@@ -733,6 +738,66 @@ class AckTimeoutListeningEnergyTest : public TestCase
     }
 };
 
+
+class EffectiveSnrLqiFallbackTest : public TestCase
+{
+  public:
+    EffectiveSnrLqiFallbackTest()
+        : TestCase("LQI first-contact fallback uses channel effective SNR including interference")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        auto dev = CreateObject<WsnNetDevice>();
+        dev->SetNodeId(2);
+
+        RadioParameters radio;
+        radio.backgroundNoiseDbm = -116.0;
+
+        auto app = CreateObject<WsnRoutingApp>();
+        app->Configure(dev, 2, false, MetricType::ZIGBEE_LQI, radio, AtpcMode::WITH_FEEDBACK);
+
+        WsnHeader hdr;
+        hdr.type = FrameType::PATH_DISCOVERY; // broadcast, no ACK side effect
+        hdr.originatorId = 0;
+        hdr.targetId = 99;
+        hdr.floodId = 1;
+        hdr.prevHopId = 1;
+
+        Ptr<Packet> packet = Create<Packet>();
+        packet->AddHeader(hdr);
+
+        WsnLinkInfoTag tag;
+        tag.rssiDbm = -80.0;  // reconstructed SNR from RSSI-noise would be +36 dB
+        tag.snrDb = 5.0;      // authoritative effective SNR after channel penalty
+        tag.txPowerDbm = 4.0;
+
+        WsnRoutingAppTestPeer::Receive(*app, packet, Mac48Address(), tag);
+
+        const double expected =
+            ZigbeeLqiMetric::LinkCostFromDeliveryProbability(PrrFromSnrDb(tag.snrDb));
+        const double unpenalized =
+            ZigbeeLqiMetric::LinkCostFromDeliveryProbability(
+                PrrFromSnrDb(tag.rssiDbm - radio.backgroundNoiseDbm));
+
+        NS_TEST_ASSERT_MSG_NE(expected,
+                              unpenalized,
+                              "fixture must distinguish effective and reconstructed SNR");
+
+        LinkMetricResult result = WsnRoutingAppTestPeer::LinkMetric(*app, 1);
+        NS_TEST_EXPECT_MSG_EQ_TOL(result.value,
+                                  expected,
+                                  1e-12,
+                                  "first-contact LQI must use the effective SNR delivered by the channel");
+
+        app->Dispose();
+        dev->Dispose();
+        Simulator::Destroy();
+    }
+};
+
 class LinkUsableSuite : public TestSuite
 {
   public:
@@ -886,7 +951,18 @@ class AckTimeoutListeningEnergySuite : public TestSuite
 static MetricRealizedTxPowerSuite g_metricRealizedTxPowerSuite;
 static AckPhysicalTxQuantizationSuite g_ackPhysicalTxQuantizationSuite;
 static FailedRxEnergySuite g_failedRxEnergySuite;
+class EffectiveSnrLqiFallbackSuite : public TestSuite
+{
+  public:
+    EffectiveSnrLqiFallbackSuite()
+        : TestSuite("leo-r2-effective-snr-lqi", Type::UNIT)
+    {
+        AddTestCase(new EffectiveSnrLqiFallbackTest(), TestCase::Duration::QUICK);
+    }
+};
+
 static AckTimeoutListeningEnergySuite g_ackTimeoutListeningEnergySuite;
+static EffectiveSnrLqiFallbackSuite g_effectiveSnrLqiFallbackSuite;
 
 } // namespace leo
 } // namespace ns3

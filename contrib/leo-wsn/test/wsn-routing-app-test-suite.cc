@@ -113,6 +113,14 @@ class WsnRoutingAppTestPeer
     {
         app.SendUnicastReliable(hdr, nextHopId, attempt, payloadBytes);
     }
+
+    static void Receive(WsnRoutingApp& app,
+                        Ptr<Packet> packet,
+                        Mac48Address from,
+                        const WsnLinkInfoTag& tag)
+    {
+        app.OnReceive(packet, from, tag);
+    }
 };
 
 static Ptr<WsnRoutingApp>
@@ -543,6 +551,188 @@ class MetricRealizedTxPowerTest : public TestCase
     }
 };
 
+
+class AckPhysicalTxQuantizationTest : public TestCase
+{
+  public:
+    AckPhysicalTxQuantizationTest()
+        : TestCase("ACK TX uses discrete nRF52840 power even with simplified energy accounting")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        auto dev = CreateObject<WsnNetDevice>();
+        dev->SetNodeId(0);
+
+        RadioParameters radio;
+        radio.useNrf52840Energy = false;
+
+        auto app = CreateObject<WsnRoutingApp>();
+        app->Configure(dev, 0, true, MetricType::LEO, radio, AtpcMode::WITH_FEEDBACK);
+
+        auto& neighbor = WsnRoutingAppTestPeer::Neighbor(*app, 1);
+        neighbor.reqTxPowerKnown = true;
+        neighbor.reqTxPowerDbm = 3.2;
+
+        WsnHeader ping;
+        ping.type = FrameType::PING;
+        ping.origType = static_cast<uint8_t>(FrameType::PING);
+        ping.originatorId = 1;
+        ping.targetId = 0;
+        ping.seq = 77;
+        ping.prevHopId = 1;
+        ping.intendedNextHopId = 0;
+
+        Ptr<Packet> packet = Create<Packet>();
+        packet->AddHeader(ping);
+        WsnLinkInfoTag tag;
+        tag.rssiDbm = -50.0;
+        tag.snrDb = 66.0;
+        tag.txPowerDbm = 4.0;
+
+        WsnRoutingAppTestPeer::Receive(*app, packet, Mac48Address(), tag);
+
+        NS_TEST_EXPECT_MSG_EQ_TOL(dev->GetTxPowerDbm(),
+                                  4.0,
+                                  1e-12,
+                                  "ACK requested at 3.2 dBm must realize at +4 dBm");
+
+        app->Dispose();
+        dev->Dispose();
+        Simulator::Destroy();
+    }
+};
+
+class FailedRxEnergyTest : public TestCase
+{
+  public:
+    FailedRxEnergyTest()
+        : TestCase("failed PRR/CRC reception still consumes receiver energy")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        RngSeedManager::SetSeed(11);
+        RngSeedManager::SetRun(1);
+
+        NodeContainer nodes;
+        nodes.Create(2);
+        for (uint32_t i = 0; i < 2; ++i)
+        {
+            auto mm = CreateObject<ConstantPositionMobilityModel>();
+            mm->SetPosition(Vector(i * 0.01, 0.0, 0.0));
+            nodes.Get(i)->AggregateObject(mm);
+        }
+
+        auto channel = CreateObject<WsnChannel>();
+        channel->SetBackgroundNoiseDbm(100.0); // force SNR below curve -> PRR=0
+
+        auto sender = CreateObject<WsnNetDevice>();
+        sender->SetNodeId(nodes.Get(0)->GetId());
+        sender->SetAddress(Mac48Address::Allocate());
+        sender->SetChannel(channel);
+        channel->Add(sender);
+
+        auto receiver = CreateObject<WsnNetDevice>();
+        receiver->SetNodeId(nodes.Get(1)->GetId());
+        receiver->SetAddress(Mac48Address::Allocate());
+        receiver->SetChannel(channel);
+        channel->Add(receiver);
+
+        RadioParameters radio;
+        radio.useNrf52840Energy = false;
+        auto app = CreateObject<WsnRoutingApp>();
+        app->Configure(receiver,
+                       receiver->GetNodeId(),
+                       false,
+                       MetricType::HOP_COUNT,
+                       radio,
+                       AtpcMode::WITH_FEEDBACK);
+        app->SetPhyTiming(1.0e6, 100.0e-6);
+
+        WsnHeader hdr;
+        hdr.type = FrameType::PING;
+        hdr.origType = static_cast<uint8_t>(FrameType::PING);
+        hdr.originatorId = sender->GetNodeId();
+        hdr.targetId = receiver->GetNodeId();
+        hdr.prevHopId = sender->GetNodeId();
+        hdr.intendedNextHopId = receiver->GetNodeId();
+
+        Ptr<Packet> packet = Create<Packet>(1);
+        packet->AddHeader(hdr);
+        const uint32_t frameBytes = packet->GetSize();
+        const double expected =
+            radio.rxPowerPenaltyMw * ((8.0 * frameBytes) / 1.0e6 + 100.0e-6);
+
+        channel->SendUnicast(sender, packet, 8.0, receiver->GetNodeId());
+        Simulator::Run();
+
+        NS_TEST_EXPECT_MSG_EQ_TOL(receiver->GetEnergyConsumedMWs(),
+                                  expected,
+                                  1e-12,
+                                  "failed decode must still pay one RX-attempt energy cost");
+
+        app->Dispose();
+        channel->Dispose();
+        sender->Dispose();
+        receiver->Dispose();
+        Simulator::Destroy();
+    }
+};
+
+class AckTimeoutListeningEnergyTest : public TestCase
+{
+  public:
+    AckTimeoutListeningEnergyTest()
+        : TestCase("missing ACK charges the sender for the ACK listening timeout")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        auto dev = CreateObject<WsnNetDevice>();
+        dev->SetNodeId(0);
+
+        RadioParameters radio;
+        radio.useNrf52840Energy = false;
+        radio.rxPowerPenaltyMw = 1.0;
+
+        auto app = CreateObject<WsnRoutingApp>();
+        app->Configure(dev, 0, true, MetricType::HOP_COUNT, radio, AtpcMode::WITH_FEEDBACK);
+        app->SetTiming(1.0e-3, 1.0e-3, 0); // no retransmission after the first timeout
+        app->SetPhyTiming(1.0e6, 100.0e-6);
+
+        WsnHeader hdr;
+        hdr.type = FrameType::PING;
+        hdr.origType = static_cast<uint8_t>(FrameType::PING);
+        hdr.originatorId = 0;
+        hdr.targetId = 1;
+        hdr.seq = 1;
+
+        WsnRoutingAppTestPeer::SendReliable(*app, hdr, 1);
+        const double energyAfterTx = app->GetStats().energyConsumedMWs;
+
+        Simulator::Stop(Seconds(0.051));
+        Simulator::Run();
+
+        const double listenEnergy =
+            app->GetStats().energyConsumedMWs - energyAfterTx;
+        NS_TEST_EXPECT_MSG_EQ_TOL(listenEnergy,
+                                  0.05,
+                                  1e-12,
+                                  "50 ms ACK timeout at 1 mW RX must cost 0.05 mWs");
+
+        app->Dispose();
+        dev->Dispose();
+        Simulator::Destroy();
+    }
+};
+
 class LinkUsableSuite : public TestSuite
 {
   public:
@@ -663,7 +853,40 @@ class MetricRealizedTxPowerSuite : public TestSuite
 
 static DeliveryContextSuite g_deliveryContextSuite;
 static PhysicalTxQuantizationSuite g_physicalTxQuantizationSuite;
+class AckPhysicalTxQuantizationSuite : public TestSuite
+{
+  public:
+    AckPhysicalTxQuantizationSuite()
+        : TestSuite("leo-r2-ack-tx-quantization", Type::UNIT)
+    {
+        AddTestCase(new AckPhysicalTxQuantizationTest(), TestCase::Duration::QUICK);
+    }
+};
+
+class FailedRxEnergySuite : public TestSuite
+{
+  public:
+    FailedRxEnergySuite()
+        : TestSuite("leo-r2-failed-rx-energy", Type::UNIT)
+    {
+        AddTestCase(new FailedRxEnergyTest(), TestCase::Duration::QUICK);
+    }
+};
+
+class AckTimeoutListeningEnergySuite : public TestSuite
+{
+  public:
+    AckTimeoutListeningEnergySuite()
+        : TestSuite("leo-r2-ack-timeout-listening-energy", Type::UNIT)
+    {
+        AddTestCase(new AckTimeoutListeningEnergyTest(), TestCase::Duration::QUICK);
+    }
+};
+
 static MetricRealizedTxPowerSuite g_metricRealizedTxPowerSuite;
+static AckPhysicalTxQuantizationSuite g_ackPhysicalTxQuantizationSuite;
+static FailedRxEnergySuite g_failedRxEnergySuite;
+static AckTimeoutListeningEnergySuite g_ackTimeoutListeningEnergySuite;
 
 } // namespace leo
 } // namespace ns3

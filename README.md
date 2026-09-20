@@ -97,7 +97,7 @@ publication.
 | Eq. (14)| P_l = R·P_TX,max[mW] + P_TX[mW] + P_R[mW] | `LeoMetric::LinkPowerMw` |
 | Eq. (15)| dBm→mW conversion | `DbmToMw` / `MwToDbm` |
 | Eq. (16)| R = max(avg(R_AB,R_BA), R_D) | `LeoMetric::AverageRetransmissions` |
-| Eq. (17)| R_D from power deficiency | `LeoMetric::RetransmissionsFromPowerDeficiency` |
+| Eq. (17)| R_D from power deficiency; v1.1.0 exposes bounded-vs-literal policy explicitly (`boundEq17ToRMax`) | `LeoMetric::RetransmissionsFromPowerDeficiency` |
 | Eq. (18)| link signal loss vs. distance | `LinkSignalLossDb` (wsn-channel.h) |
 | Algorithm 1 | pre-TX ATPC computation | `AlgorithmOnePreTransmission` |
 | Algorithm 2 | post-RX ReqTXP update | `AlgorithmTwoPostReception` |
@@ -214,17 +214,22 @@ had to be chosen here; report them explicitly if you use this code:
    (the paper notes they are "not constant in all directions" and excludes
    them from `P_TX`/`P_R` for the same reason); if your target hardware
    has known gains, wire them into `atpc.h`'s helper functions.
-6. **Triangle-with-interference variant** ("fI" scenarios in Fig. 5/6) is
-   left as a documented TODO hook in `leo-topologies.cc` — implement the
-   per-link SNR penalty for hypotenuse nodes before drawing conclusions
-   about that specific scenario.
-7. **Timeout/EventId bookkeeping** in `WsnRoutingApp` uses a single
-   `m_timeoutEvent` member for the gateway's outstanding ping rather than
-   a per-sequence-number map; because the ping cadence and timeout are
-   both 1 s in the current defaults this does not double-count in the
-   sequential single-gateway scenario tested here, but if you extend the
-   script to multiple concurrent pingers, switch this to a keyed map (the
-   same pattern already used for `m_pendingAcks`).
+6. **Triangle-with-interference variant** ("fI" scenarios in Fig. 5/6)
+   is implemented as a **declared reconstruction**, not a source-identical
+   PHY model. `--interferenceDb` applies a per-link SNR penalty (default
+   15 dB) to links touching the selected hypotenuse nodes. The paper/source
+   material available to this reproduction does not publish a numeric dB
+   penalty that justifies 15 dB, so this value is a sensitivity parameter,
+   not an authoritative constant. The effective post-penalty SNR is now
+   preserved in the Neighbor Table and reused by the first-contact LQI
+   fallback, so routing and channel PRR no longer evaluate different SNRs.
+7. **Transaction/time-out bookkeeping** is identity-safe in v1.1.0:
+   ping timeouts are keyed by `(targetId,seq)`, path-discovery completion
+   is matched to the current `(targetId,floodId)`, and failed discoveries
+   have an explicit liveness timeout. `--ackTimeoutS` and
+   `--discoveryTimeoutS` are reconstruction parameters and must be frozen
+   in the experiment manifest; neither is claimed as a source-published
+   timing constant.
 9. **Destination-side route selection window (`m_discoveryWindowS`,
    default 0.15 s).** Earlier revisions of this code let each destination
    reply to whichever PATH_DISCOVERY copy arrived *first*, for every
@@ -494,6 +499,43 @@ implemented in full except where noted:
 | Eq. (2)-(3) literal, `--metric=lqi-literal` | LIVE (as of a third review round), no correction applied -- exposes a verified directional inconsistency (stronger links get HIGHER cost) in addition to the floor-effect degeneracy already documented for `ZigbeeLqiMetric` | `ZigbeeLqiLiteralMetric` |
 | Algorithm 1 & 2 | LIVE (as of P1-1) | `atpc.cc` |
 
+## v1.1.0 R2 radio/physical/energy requalification
+
+The repair branch changes several semantics that materially affect any
+future raw dataset:
+
+- **TX power is a physical property, not an energy-model switch.** Requested
+  powers are always realized on the nRF52840's supported discrete TXPOWER
+  levels. A request such as 3.2 dBm therefore becomes +4 dBm whether
+  `useNrf52840Energy` is true or false.
+- **The LEO metric uses the same realized `P_TX` as the channel.** It no
+  longer scores a continuous requested power while the hardware transmits
+  a different discrete value.
+- **Failed reception attempts consume RX energy.** A frame that fails the
+  PRR/CRC outcome is not delivered to routing/ATPC state, but the intended
+  unicast receiver (or broadcast listener) is charged the corresponding
+  frame-duration RX energy.
+- **Missing ACKs consume listening energy.** An ACK timeout charges the
+  sender for the configured `ackTimeoutS` receive/listen window; a
+  successfully received ACK is already charged as its decoded frame.
+- **Effective SNR is preserved.** `NeighborEntry::lastSnrDb` stores the
+  channel's post-interference SNR, preventing the LQI first-contact
+  fallback from silently reconstructing an unpenalized SNR from RSSI.
+- **Eq. (17) policy is explicit.** `boundEq17ToRMax=true` reproduces the
+  historical v1.0.0 clamp; `false` evaluates the transcribed equation
+  literally. For `R_max=4` and a 15 dB power deficiency, those policies
+  give `R_D=4` and `R_D=40`, respectively. The final production choice
+  is an experiment-freeze/source-fidelity decision, not a hidden code choice.
+- **Finite ARQ remains an operational reconstruction of the reliability
+  process**, not a claim that the implementation is algebraically
+  identical to the paper's Eq. (4). `macMaxRetries`, `ackTimeoutS`, and
+  `discoveryTimeoutS` are now CLI-exposed so R4 can freeze and sweep them.
+
+The exact source-paper justification for the numeric interference penalty,
+the operational ARQ substitution, and whether Eq. (17) should be bounded
+is still treated as **SOURCE_FIDELITY_PENDING** until an independently
+verifiable full-text source/author clarification is available.
+
 ## Third-round addition: datasheet-anchored nRF52840 energy model (opt-in)
 
 Following a lighter external review's suggestion (and cross-checked
@@ -534,14 +576,15 @@ alternative to the original continuous `DbmToMw(dbm)` / fixed
   `officialSource = false`. This is a declared, disclosed approximation
   (per the LeapSpace review's guidance), not a claim of datasheet-grade
   accuracy at every level.
-- Enable via `RadioParameters::useNrf52840Energy = true` (default
-  `false`, so existing results/comparisons remain reproducible without
-  this change) or `--useNrf52840Energy=true` on the command line. When
-  enabled, it also changes which discrete power gets radiated (and hence
-  the channel's RSSI/PRR computation), not just the energy bookkeeping --
-  so results with this flag on are not directly comparable, run-for-run,
-  to results collected with it off; treat it as a separate sensitivity
-  scenario, not a drop-in refinement of prior runs.
+- `RadioParameters::useNrf52840Energy` / `--useNrf52840Energy` now
+  controls **energy accounting only**. Physical TX realization is always
+  discrete for the modeled nRF52840, through the single authoritative
+  `RealizeNrf52840TxPowerDbm()` path used by data, ACK, channel RSSI/PRR,
+  and the LEO metric's `P_TX` term. This intentionally breaks v1.0.0's
+  coupling where disabling the current model also allowed physically
+  impossible continuous TX levels. Consequently, v1.0.0 raw CSVs are
+  historical artifacts and must be regenerated after the v1.1.0 repair;
+  they cannot be "patched" into equivalence.
 - **HFXO clock current can now be added back in (opt-in), sourced from
   the same document, Section 5.4.4.2.** The table's RADIO-only current
   excludes the current the HFXO crystal oscillator itself draws while

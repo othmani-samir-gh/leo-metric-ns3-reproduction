@@ -747,12 +747,25 @@ WsnChannel::DeliverIfSuccessful(Ptr<WsnNetDevice> sender, Ptr<WsnNetDevice> rece
 {
     // Positions are tracked externally through each device's node id and
     // an ns-3 MobilityModel installed on that node by the simulation
-    // script; see scratch/leo-topologies.cc.
-    Ptr<Node> n1 = NodeList::GetNode(sender->GetNodeId());
-    Ptr<Node> n2 = NodeList::GetNode(receiver->GetNodeId());
+    // script; see scratch/leo-topologies.cc. Fail closed if that contract
+    // is violated: silently substituting distance=1 m would fabricate a
+    // strong link and hide a broken simulation configuration.
+    const uint32_t senderId = sender->GetNodeId();
+    const uint32_t receiverId = receiver->GetNodeId();
+    NS_ABORT_MSG_IF(senderId >= NodeList::GetNNodes() || receiverId >= NodeList::GetNNodes(),
+                    "WsnChannel node id is outside NodeList: sender="
+                        << senderId << " receiver=" << receiverId
+                        << " nNodes=" << NodeList::GetNNodes());
+    Ptr<Node> n1 = NodeList::GetNode(senderId);
+    Ptr<Node> n2 = NodeList::GetNode(receiverId);
     Ptr<MobilityModel> m1 = n1->GetObject<MobilityModel>();
     Ptr<MobilityModel> m2 = n2->GetObject<MobilityModel>();
-    double distance = m1 && m2 ? m1->GetDistanceFrom(m2) : 1.0;
+    NS_ABORT_MSG_IF(!m1 || !m2,
+                    "WsnChannel requires a MobilityModel on both endpoint nodes: sender="
+                        << senderId << " hasMobility=" << static_cast<bool>(m1)
+                        << " receiver=" << receiverId
+                        << " hasMobility=" << static_cast<bool>(m2));
+    double distance = m1->GetDistanceFrom(m2);
 
     double lslDb = LinkSignalLossDb(distance, m_environmentFactor, m_signalLossPerMeterDbm);
     double rssiDbm = txPowerDbm + lslDb; // LSL already includes the sign, Eq. (6)/(18)

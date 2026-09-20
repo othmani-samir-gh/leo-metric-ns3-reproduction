@@ -414,16 +414,14 @@ implemented in full except where noted:
 - **P0-1 (ping-outcome column semantics).** Added `NodeStats::pingNoRoute`,
   separate from `pingTimeouts` (which now means "sent but no reply").
   CSV gained a `pingNoRoute` column.
-- **P0-2 (`WsnChannel::GetDevice` signature) -- NOT applied, and here is
-  why.** `fix_plan.md` asserts `ns3::Channel::GetDevice` takes `uint32_t`
-  and that our `std::size_t` override therefore leaves `WsnChannel`
-  abstract and uncompilable. This is contradicted by direct evidence: the
-  exact code with the `std::size_t` signature was built and run
-  successfully multiple times on a real ns-3.48 checkout during this
-  project's development (producing valid CSV output across dozens of
-  scenarios). If your ns-3 version is older and genuinely uses `uint32_t`
-  here, you will get a real "does not override" compiler error --
-  in that case, and only then, change the override to `uint32_t`.
+- **P0-2 (`WsnChannel` / ns-3 Channel contract) -- superseded by
+  the v1.1.0 R3 repair.** The original `std::size_t` override does compile
+  on ns-3.48, so the earlier claimed signature mismatch was not the real
+  defect. The deeper problem was semantic: `WsnChannel` inherited from
+  `ns3::Channel` even though `WsnNetDevice` is not an `ns3::NetDevice`,
+  forcing `GetDevice()` to return `nullptr`. R3 removes that misleading
+  inheritance entirely. `WsnChannel` is now an `ns3::Object` and exposes
+  `GetWsnDevice()` for its actual device type.
 - **P0-3 (interference variant).** `WsnChannel::SetLinkSnrPenaltyDb`
   implemented; `leo-topologies.cc` now applies `--interferenceDb` (default
   15 dB, undocumented in the paper -- a declared stand-in, not a published
@@ -535,6 +533,47 @@ The exact source-paper justification for the numeric interference penalty,
 the operational ARQ substitution, and whether Eq. (17) should be bounded
 is still treated as **SOURCE_FIDELITY_PENDING** until an independently
 verifiable full-text source/author clarification is available.
+
+## v1.1.0 R3 RNG/robustness/runtime requalification
+
+R3 removes runtime behavior that previously depended on hidden global
+allocation order and adds fail-fast guards around unsafe experiment inputs.
+
+- **Stable RNG identities.** `WsnChannel::AssignStreams()` binds the
+  channel PRR generator explicitly. The driver resets ns-3's automatic
+  stream index at each repetition, uses channel stream 10, and reserves
+  deterministic per-node mobility blocks starting at stream 1000 with a
+  stride of 16. Adding unrelated RNG objects no longer changes the
+  channel's 64-draw regression sequence.
+- **Replay qualification.** Independent driver executions with the same
+  seed were byte-identical for static, random-walk, and random-waypoint
+  smoke scenarios. This establishes stable component/run identity for
+  paired experiments. It does not imply that different routing metrics
+  consume an identical number of random draws after their trajectories
+  diverge.
+- **Fail-fast input/configuration validation.** Dangerous values such as
+  `nNodes=0`, zero diagnostics periods, invalid bitrate/overhead, invalid
+  EMA, bad mobility ranges, output-path collisions, and failed CSV opens
+  now abort before simulation instead of underflowing, looping, or silently
+  losing output. The channel also aborts if an endpoint node id is outside
+  `NodeList` or either endpoint lacks the required `MobilityModel`;
+  the old silent `distance=1 m` fallback has been removed. Core setters
+  likewise reject non-finite/invalid timing values.
+- **Runtime instrumentation found and closed a real leak.** A monolithic
+  build of the leo-wsn sources plus the driver was run under
+  AddressSanitizer/LeakSanitizer and UndefinedBehaviorSanitizer. After the
+  channel-contract repair, the first sanitizer rerun reported **4320 bytes
+  in 64 leaked allocations**, traced to the strong ownership cycle
+  `WsnChannel -> Ptr<WsnNetDevice> -> Ptr<WsnChannel>`. The device's
+  channel back-reference is now explicitly non-owning. The same instrumented
+  static, random-walk, and random-waypoint runs were repeated afterward
+  with no AddressSanitizer, LeakSanitizer, or UBSan finding.
+- **Honest ns-3 object contract.** `WsnChannel` no longer subclasses
+  `ns3::Channel` merely to satisfy an interface it cannot truthfully
+  implement; it is an `Object` with a typed `GetWsnDevice()` accessor.
+
+Scientific raw-data regeneration remains closed until the subsequent
+experiment-freeze gate is complete.
 
 ## Third-round addition: datasheet-anchored nRF52840 energy model (opt-in)
 

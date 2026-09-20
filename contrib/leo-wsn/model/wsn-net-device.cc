@@ -92,10 +92,10 @@ WsnNetDevice::DoDispose()
 void
 WsnNetDevice::SetChannel(Ptr<WsnChannel> channel)
 {
-    m_channel = channel;
+    m_channel = PeekPointer(channel);
 }
 
-Ptr<WsnChannel>
+WsnChannel*
 WsnNetDevice::GetChannel() const
 {
     return m_channel;

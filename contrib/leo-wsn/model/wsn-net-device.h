@@ -71,8 +71,11 @@ class WsnNetDevice : public Object
     static TypeId GetTypeId();
     WsnNetDevice();
 
+    /// Bind this endpoint to a channel. The channel owns attached
+    /// WsnNetDevice instances; this back-reference is intentionally
+    /// non-owning to avoid a reference-count cycle.
     void SetChannel(Ptr<WsnChannel> channel);
-    Ptr<WsnChannel> GetChannel() const;
+    WsnChannel* GetChannel() const;
 
     void SetAddress(Mac48Address addr);
     Mac48Address GetAddress() const;
@@ -116,7 +119,7 @@ class WsnNetDevice : public Object
     void DoDispose() override;
 
   private:
-    Ptr<WsnChannel> m_channel;
+    WsnChannel* m_channel{nullptr}; //!< non-owning; WsnChannel owns attached devices
     Mac48Address m_address;
     uint32_t m_nodeId{0};
     double m_txPowerDbm{0.0};

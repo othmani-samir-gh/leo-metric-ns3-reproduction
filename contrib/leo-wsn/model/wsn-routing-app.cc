@@ -589,6 +589,8 @@ WsnRoutingApp::OnReceive(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag t
     entry.lslKnown = true;
     entry.lastRssiDbm = tag.rssiDbm;
     entry.rssiKnown = true;
+    entry.lastSnrDb = tag.snrDb;
+    entry.snrKnown = true;
     m_neighborTable.UpdateRxRetransmissions(key, hdr.retransmissionCount, m_emaAlpha); // hdr, not tag: see WsnLinkInfoTag doc
     if (!entry.maxTxPowerKnown)
     {

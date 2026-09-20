@@ -90,20 +90,15 @@ ZigbeeLqiMetric::ComputeLinkMetric(const NeighborEntry& entryForPeer, const Radi
         // Best available estimate: EMA of actually-observed ARQ outcomes.
         pl = entryForPeer.deliveryRatioEma;
     }
-    else if (entryForPeer.rssiKnown)
+    else if (entryForPeer.snrKnown || entryForPeer.rssiKnown)
     {
-        // No ACK history yet (e.g. this is the very first flood a node
-        // has ever seen from this neighbor -- true for the whole
-        // "connection phase" of Section 4, since it runs path discovery
-        // exactly once per node). Rather than falling back to one flat
-        // constant for every link (which would make Eq. (1) numerically
-        // degenerate to Hop-count for that entire phase -- the second
-        // modeling pitfall found while validating this module), estimate
-        // p_l from the SNR actually measured on this reception, using the
-        // same empirical PRR(SNR) relationship the channel itself uses to
-        // decide delivery (Fig. 2). This keeps Eq. (1) meaningfully
-        // link-quality-sensitive from the very first packet.
-        double snrDb = entryForPeer.lastRssiDbm - radio.backgroundNoiseDbm;
+        // No ACK history yet. Prefer the exact effective SNR delivered by
+        // WsnChannel because it includes any configured interference
+        // penalty. Retain RSSI-noise reconstruction only as a compatibility
+        // fallback for a NeighborEntry created without channel metadata.
+        double snrDb = entryForPeer.snrKnown
+                           ? entryForPeer.lastSnrDb
+                           : entryForPeer.lastRssiDbm - radio.backgroundNoiseDbm;
         pl = PrrFromSnrDb(snrDb);
     }
     double cost = LinkCostFromDeliveryProbability(pl);

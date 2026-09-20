@@ -24,7 +24,7 @@ authors:
     family-names: BELILA
     affiliation: University of El Oued
 
-repository-code: 'https://github.com/USER/REPO'
+repository-code: 'https://github.com/othmani-samir-gh/leo-metric-ns3-reproduction'
 abstract: >-
   An independent ns-3 reconstruction of the Low Energy and Overhead (LEO)
   wireless-sensor-network routing metric, together with hop-count and two
@@ -47,7 +47,7 @@ keywords:
   - node mobility
 license: MIT
 version: 1.0.0
-date-released: '2026-01-01'
+date-released: '2026-09-20'
 
 references:
   - type: article

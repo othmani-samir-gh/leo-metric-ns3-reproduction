@@ -228,6 +228,8 @@ class WsnRoutingApp : public Application
     void StopApplication() override;
 
   private:
+    friend class WsnRoutingAppTestPeer; // regression-test access only; no runtime behavior
+
     void OnReceive(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag tag);
 
     /// Single-shot, unacknowledged broadcast (used for PATH_DISCOVERY,

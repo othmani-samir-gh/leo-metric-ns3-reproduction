@@ -15,6 +15,8 @@ build_lib(
     model/wsn-net-device.h
     model/wsn-routing-app.h
     model/nrf52840-current-table.h
+  TEST_SOURCES
+    test/wsn-routing-app-test-suite.cc
   LIBRARIES_TO_LINK
     ${libcore}
     ${libnetwork}

@@ -42,6 +42,11 @@ set. Mobility, nRF-energy accounting, Eq.17 policy, interference-strength, and
 other reconstruction-constant sweeps are reported separately as sensitivity
 or exploratory analyses.
 
+The regenerated v1.1.0 data are not committed as generated Git content. A
+checksum-bound dataset archive is prepared as `leo-v1.1.0-results.tar.gz`;
+its SHA256 and verification instructions are recorded in `RELEASE_ASSETS.md`
+and `RELEASE_ASSET_MANIFEST.json`.
+
 ## What this repository contains
 
 | Path | Contents |
@@ -50,7 +55,7 @@ or exploratory analyses.
 | `scratch/` | Scenario driver and the equation cross-check program |
 | `results/raw/` | **Legacy v1.0.0** raw files (18,900 actual rows); historical only |
 | `results/derived/` | **Legacy v1.0.0** screening/significance outputs; superseded by R6 |
-| `results/v1.1.0/` | Frozen v1.1.0 R5 dataset: 617 configs, 12,340 main rows, 2,344,600 route-evidence rows |
+| `results/v1.1.0/` | Frozen v1.1.0 R5 dataset after extracting the separate `leo-v1.1.0-results.tar.gz` release asset; see `RELEASE_ASSETS.md` |
 | `data/fig2-digitized/` | Digitized PRR/SNR curve from the source paper's Fig. 2 |
 | `figures/` | Legacy v1.0.0 figures plus the governed `figures/v1.1.0/` release-candidate figures |
 | `analysis/` | v1.1.0 R6 statistical reanalysis and R7 figure generation |
@@ -96,8 +101,10 @@ diff cpp_out.txt py_out.txt && echo "ORACLE AND C++ AGREE"
 ```
 
 To reproduce the authoritative v1.1.0 analysis **without installing ns-3**,
-run `python3 analysis/r6_statistical_reanalysis.py` against the governed
-`results/v1.1.0/` dataset, then `python3 analysis/r7_make_figures.py`.
+first verify and extract the separate `leo-v1.1.0-results.tar.gz` asset at the
+repository root (see `RELEASE_ASSETS.md`). Then run
+`python3 analysis/r6_statistical_reanalysis.py` against the governed
+`results/v1.1.0/` dataset, followed by `python3 analysis/r7_make_figures.py`.
 `DATA_DICTIONARY.md` marks the older v1.0.0 analysis path as historical.
 
 ## Citing

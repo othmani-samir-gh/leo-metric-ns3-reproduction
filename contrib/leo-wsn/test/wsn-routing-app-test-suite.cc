@@ -834,6 +834,106 @@ class Eq17PolicyTest : public TestCase
     }
 };
 
+
+class ChannelStreamIdentityTest : public TestCase
+{
+  public:
+    ChannelStreamIdentityTest()
+        : TestCase("explicit channel RNG stream is stable against unrelated RNG allocation order")
+    {
+    }
+
+  private:
+    class Recorder
+    {
+      public:
+        void OnSuccess(Ptr<Packet>, Mac48Address, WsnLinkInfoTag)
+        {
+            outcomes.push_back(1);
+        }
+
+        void OnFailure(Ptr<Packet>, Mac48Address, WsnLinkInfoTag)
+        {
+            outcomes.push_back(0);
+        }
+
+        std::vector<uint8_t> outcomes;
+    };
+
+    std::vector<uint8_t> RunSequence(uint32_t junkObjects)
+    {
+        RngSeedManager::SetSeed(12345);
+        RngSeedManager::SetRun(7);
+
+        std::vector<Ptr<UniformRandomVariable>> junk;
+        for (uint32_t i = 0; i < junkObjects; ++i)
+        {
+            auto rv = CreateObject<UniformRandomVariable>();
+            (void)rv->GetValue();
+            junk.push_back(rv);
+        }
+
+        NodeContainer nodes;
+        nodes.Create(2);
+        for (uint32_t i = 0; i < 2; ++i)
+        {
+            auto mm = CreateObject<ConstantPositionMobilityModel>();
+            mm->SetPosition(Vector(i * 1.0, 0.0, 0.0));
+            nodes.Get(i)->AggregateObject(mm);
+        }
+
+        auto channel = CreateObject<WsnChannel>();
+        channel->SetBackgroundNoiseDbm(-84.0); // 0 dBm TX at 1 m -> SNR ~20 dB, non-trivial PRR
+        NS_TEST_EXPECT_MSG_EQ(channel->AssignStreams(77),
+                              1,
+                              "WsnChannel should consume exactly one RNG stream");
+
+        auto sender = CreateObject<WsnNetDevice>();
+        sender->SetNodeId(nodes.Get(0)->GetId());
+        sender->SetAddress(Mac48Address::Allocate());
+        sender->SetChannel(channel);
+        channel->Add(sender);
+
+        Recorder recorder;
+        auto receiver = CreateObject<WsnNetDevice>();
+        receiver->SetNodeId(nodes.Get(1)->GetId());
+        receiver->SetAddress(Mac48Address::Allocate());
+        receiver->SetChannel(channel);
+        receiver->SetReceiveCallback(MakeCallback(&Recorder::OnSuccess, &recorder));
+        receiver->SetReceiveFailureCallback(MakeCallback(&Recorder::OnFailure, &recorder));
+        channel->Add(receiver);
+
+        for (uint32_t i = 0; i < 64; ++i)
+        {
+            channel->SendUnicast(sender, Create<Packet>(1), 0.0, receiver->GetNodeId());
+        }
+        Simulator::Run();
+
+        auto result = recorder.outcomes;
+        channel->Dispose();
+        sender->Dispose();
+        receiver->Dispose();
+        Simulator::Destroy();
+        return result;
+    }
+
+    void DoRun() override
+    {
+        const auto baseline = RunSequence(0);
+        const auto perturbed = RunSequence(11);
+
+        NS_TEST_EXPECT_MSG_EQ(baseline.size(),
+                              64u,
+                              "baseline fixture must record every channel roll");
+        NS_TEST_EXPECT_MSG_EQ(perturbed.size(),
+                              64u,
+                              "perturbed fixture must record every channel roll");
+        NS_TEST_EXPECT_MSG_EQ(baseline,
+                              perturbed,
+                              "explicit stream identity must make channel draws independent of unrelated RNG allocations");
+    }
+};
+
 class LinkUsableSuite : public TestSuite
 {
   public:
@@ -1009,7 +1109,18 @@ class Eq17PolicySuite : public TestSuite
 };
 
 static EffectiveSnrLqiFallbackSuite g_effectiveSnrLqiFallbackSuite;
+class ChannelStreamIdentitySuite : public TestSuite
+{
+  public:
+    ChannelStreamIdentitySuite()
+        : TestSuite("leo-r3-channel-stream-identity", Type::UNIT)
+    {
+        AddTestCase(new ChannelStreamIdentityTest(), TestCase::Duration::QUICK);
+    }
+};
+
 static Eq17PolicySuite g_eq17PolicySuite;
+static ChannelStreamIdentitySuite g_channelStreamIdentitySuite;
 
 } // namespace leo
 } // namespace ns3

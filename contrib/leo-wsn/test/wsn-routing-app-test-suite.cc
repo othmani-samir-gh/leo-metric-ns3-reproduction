@@ -1,6 +1,10 @@
 #include "ns3/leo-wsn-module.h"
 #include "ns3/simulator.h"
 #include "ns3/test.h"
+#include "ns3/mobility-module.h"
+#include "ns3/node-container.h"
+
+#include <limits>
 
 namespace ns3
 {
@@ -73,6 +77,31 @@ class WsnRoutingAppTestPeer
     static EventId PingTimeoutEvent(const WsnRoutingApp& app)
     {
         return app.m_pingTimeoutEvents.empty() ? EventId() : app.m_pingTimeoutEvents.begin()->second;
+    }
+
+    static void InjectFinalPendingAck(WsnRoutingApp& app,
+                                      const std::string& key,
+                                      uint32_t nextHopId)
+    {
+        WsnRoutingApp::PendingUnicast pu;
+        pu.nextHopId = nextHopId;
+        pu.attempt = app.m_macMaxRetries;
+        app.m_pendingAcks[key] = pu;
+    }
+
+    static void FireAckTimeout(WsnRoutingApp& app, const std::string& key)
+    {
+        app.OnAckTimeout(key);
+    }
+
+    static void SetGlobalFrameCounter(uint64_t value)
+    {
+        WsnRoutingApp::s_globalFrameCounter = value;
+    }
+
+    static uint64_t GlobalFrameCounter()
+    {
+        return WsnRoutingApp::s_globalFrameCounter;
     }
 };
 
@@ -265,6 +294,160 @@ class MatchingPingReplyTest : public TestCase
     }
 };
 
+
+class ArqRouteInvalidationTest : public TestCase
+{
+  public:
+    ArqRouteInvalidationTest()
+        : TestCase("final ARQ failure invalidates every route using the failed next hop")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        auto app = MakeLeoApp(0, true);
+        WsnRoutingAppTestPeer::SetValidRoute(*app, 10, 1);
+        WsnRoutingAppTestPeer::SetValidRoute(*app, 11, 1);
+        WsnRoutingAppTestPeer::SetValidRoute(*app, 12, 2);
+
+        WsnRoutingAppTestPeer::InjectFinalPendingAck(*app, "final-failure", 1);
+        WsnRoutingAppTestPeer::FireAckTimeout(*app, "final-failure");
+
+        NS_TEST_EXPECT_MSG_EQ(WsnRoutingAppTestPeer::HasValidRoute(*app, 10),
+                              false,
+                              "route 10 depends on failed next hop 1");
+        NS_TEST_EXPECT_MSG_EQ(WsnRoutingAppTestPeer::HasValidRoute(*app, 11),
+                              false,
+                              "route 11 depends on failed next hop 1");
+        NS_TEST_EXPECT_MSG_EQ(WsnRoutingAppTestPeer::HasValidRoute(*app, 12),
+                              true,
+                              "unrelated route through next hop 2 must remain valid");
+        Simulator::Destroy();
+    }
+};
+
+class FrameCounterRunResetTest : public TestCase
+{
+  public:
+    FrameCounterRunResetTest()
+        : TestCase("global frame safety counter resets at Simulator::Destroy between runs")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        auto app = MakeLeoApp(0, true);
+        WsnRoutingAppTestPeer::SetGlobalFrameCounter(1234);
+        Simulator::Destroy();
+        NS_TEST_EXPECT_MSG_EQ(WsnRoutingAppTestPeer::GlobalFrameCounter(),
+                              0u,
+                              "a new independent run must not inherit the previous run frame count");
+    }
+};
+
+class LifecycleCycleCleanupTest : public TestCase
+{
+  public:
+    LifecycleCycleCleanupTest()
+        : TestCase("Dispose breaks WsnChannel <-> WsnNetDevice ownership cycle")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        auto channel = CreateObject<WsnChannel>();
+        auto dev = CreateObject<WsnNetDevice>();
+        dev->SetChannel(channel);
+        channel->Add(dev);
+
+        channel->Dispose();
+
+        NS_TEST_EXPECT_MSG_EQ(channel->GetNDevices(),
+                              0u,
+                              "disposed channel must release owned devices");
+        NS_TEST_EXPECT_MSG_EQ(dev->GetChannel() == nullptr,
+                              true,
+                              "channel disposal must clear device back-reference");
+
+        dev->Dispose();
+        Simulator::Destroy();
+    }
+};
+
+class DeliveryContextTest : public TestCase
+{
+  public:
+    DeliveryContextTest()
+        : TestCase("channel delivery executes under receiver node context")
+    {
+    }
+
+  private:
+    void OnReceive(Ptr<Packet>, Mac48Address, WsnLinkInfoTag)
+    {
+        ++m_deliveries;
+        if (Simulator::GetContext() != m_receiverNodeId)
+        {
+            ++m_badContexts;
+        }
+    }
+
+    void DoRun() override
+    {
+        RngSeedManager::SetSeed(1);
+        RngSeedManager::SetRun(1);
+
+        NodeContainer nodes;
+        nodes.Create(2);
+        for (uint32_t i = 0; i < 2; ++i)
+        {
+            auto mm = CreateObject<ConstantPositionMobilityModel>();
+            mm->SetPosition(Vector(i * 0.01, 0.0, 0.0));
+            nodes.Get(i)->AggregateObject(mm);
+        }
+
+        auto channel = CreateObject<WsnChannel>();
+        channel->SetBackgroundNoiseDbm(-200.0);
+
+        auto sender = CreateObject<WsnNetDevice>();
+        sender->SetNodeId(nodes.Get(0)->GetId());
+        sender->SetAddress(Mac48Address::Allocate());
+        sender->SetChannel(channel);
+        channel->Add(sender);
+
+        auto receiver = CreateObject<WsnNetDevice>();
+        receiver->SetNodeId(nodes.Get(1)->GetId());
+        receiver->SetAddress(Mac48Address::Allocate());
+        receiver->SetChannel(channel);
+        receiver->SetReceiveCallback(MakeCallback(&DeliveryContextTest::OnReceive, this));
+        channel->Add(receiver);
+        m_receiverNodeId = receiver->GetNodeId();
+
+        for (uint32_t i = 0; i < 20; ++i)
+        {
+            channel->SendUnicast(sender, Create<Packet>(1), 8.0, receiver->GetNodeId());
+        }
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_GT(m_deliveries, 0u, "fixture must deliver at least one packet");
+        NS_TEST_EXPECT_MSG_EQ(m_badContexts,
+                              0u,
+                              "all deliveries must execute with receiver node context");
+
+        channel->Dispose();
+        sender->Dispose();
+        receiver->Dispose();
+        Simulator::Destroy();
+    }
+
+    uint32_t m_receiverNodeId{std::numeric_limits<uint32_t>::max()};
+    uint32_t m_deliveries{0};
+    uint32_t m_badContexts{0};
+};
+
 class LinkUsableSuite : public TestSuite
 {
   public:
@@ -319,7 +502,51 @@ static LinkUsableSuite g_linkUsableSuite;
 static DiscoveryTimeoutSuite g_discoveryTimeoutSuite;
 static StaleDiscoveryReplySuite g_staleDiscoveryReplySuite;
 static StalePingReplySuite g_stalePingReplySuite;
+class ArqRouteInvalidationSuite : public TestSuite
+{
+  public:
+    ArqRouteInvalidationSuite()
+        : TestSuite("leo-r1-arq-route-invalidation", Type::UNIT)
+    {
+        AddTestCase(new ArqRouteInvalidationTest(), TestCase::Duration::QUICK);
+    }
+};
+
+class FrameCounterResetSuite : public TestSuite
+{
+  public:
+    FrameCounterResetSuite()
+        : TestSuite("leo-r1-frame-counter-reset", Type::UNIT)
+    {
+        AddTestCase(new FrameCounterRunResetTest(), TestCase::Duration::QUICK);
+    }
+};
+
+class LifecycleCleanupSuite : public TestSuite
+{
+  public:
+    LifecycleCleanupSuite()
+        : TestSuite("leo-r1-lifecycle-cleanup", Type::UNIT)
+    {
+        AddTestCase(new LifecycleCycleCleanupTest(), TestCase::Duration::QUICK);
+    }
+};
+
+class DeliveryContextSuite : public TestSuite
+{
+  public:
+    DeliveryContextSuite()
+        : TestSuite("leo-r1-delivery-context", Type::UNIT)
+    {
+        AddTestCase(new DeliveryContextTest(), TestCase::Duration::QUICK);
+    }
+};
+
 static MatchingPingReplySuite g_matchingPingReplySuite;
+static ArqRouteInvalidationSuite g_arqRouteInvalidationSuite;
+static FrameCounterResetSuite g_frameCounterResetSuite;
+static LifecycleCleanupSuite g_lifecycleCleanupSuite;
+static DeliveryContextSuite g_deliveryContextSuite;
 
 } // namespace leo
 } // namespace ns3

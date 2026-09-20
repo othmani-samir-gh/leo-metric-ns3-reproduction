@@ -10,10 +10,20 @@ type: software
 authors:
   # REPLACE with the real author list before publishing. Order and
   # affiliations should match the paper.
-  - given-names: FIRST
-    family-names: LAST
-    affiliation: INSTITUTION
-    orcid: 'https://orcid.org/0000-0000-0000-0000'
+  - given-names: Samir
+    family-names: Othmani
+    affiliation: University of El Oued
+    orcid: https://orcid.org/0000-0002-1893-0076
+  - given-names: Okba
+    family-names: KAZAR
+    affiliation: University of Kalba, Shajah,UAE 
+  - given-names: Nedjoua Houda
+    family-names: KHOLLADI
+    affiliation: University of El Oued
+  - given-names: Khaoula
+    family-names: BELILA
+    affiliation: University of El Oued
+
 repository-code: 'https://github.com/USER/REPO'
 abstract: >-
   An independent ns-3 reconstruction of the Low Energy and Overhead (LEO)

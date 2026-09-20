@@ -361,8 +361,7 @@ WsnRoutingApp::BroadcastFrame(WsnHeader hdr, uint32_t payloadBytes)
     pkt->AddHeader(hdr);
     // Broadcasts always use max power: "transmission power is always set
     // to the maximum possible value when broadcasting" (Section 3.3).
-    double txPowerDbm =
-        m_radio.useNrf52840Energy ? SnapToNearestAvailableTxPowerDbm(m_radio.pTxMaxDbm) : m_radio.pTxMaxDbm;
+    double txPowerDbm = RealizeNrf52840TxPowerDbm(m_radio.pTxMaxDbm);
     m_device->SetTxPowerDbm(txPowerDbm);
     m_device->Send(pkt);
     ChargeEnergy(hdr.type, txPowerDbm, true, hdr.GetSerializedSize() + payloadBytes);
@@ -394,18 +393,16 @@ WsnRoutingApp::SendUnicastReliable(WsnHeader hdr, uint32_t nextHopId, uint8_t at
     hdr.intendedNextHopId = nextHopId; // see WsnHeader::intendedNextHopId doc comment
 
     Ipv4Address key(nextHopId);
-    double txPowerDbm = m_radio.pTxMaxDbm;
+    double requestedTxPowerDbm = m_radio.pTxMaxDbm;
     if (m_neighborTable.Has(key) && m_neighborTable.Get(key).reqTxPowerKnown)
     {
-        txPowerDbm = std::min(m_neighborTable.Get(key).reqTxPowerDbm, m_radio.pTxMaxDbm);
+        requestedTxPowerDbm =
+            std::clamp(m_neighborTable.Get(key).reqTxPowerDbm, m_radio.pTxMinDbm, m_radio.pTxMaxDbm);
     }
-    if (m_radio.useNrf52840Energy)
-    {
-        // Paper (Section 3.3): "P_TX [dBm] is set to the nearest greater
-        // or equal available transmission power by the transmitter, the
-        // same as ATPC would use."
-        txPowerDbm = SnapToNearestAvailableTxPowerDbm(txPowerDbm);
-    }
+    // Hardware realization is a radio property, not an energy-accounting
+    // option.  Use this exact realized value for channel delivery and
+    // subsequent energy accounting.
+    double txPowerDbm = RealizeNrf52840TxPowerDbm(requestedTxPowerDbm);
 
     if (m_atpcMode == AtpcMode::WITHOUT_FEEDBACK)
     {

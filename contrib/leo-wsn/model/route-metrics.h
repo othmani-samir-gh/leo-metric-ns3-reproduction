@@ -72,14 +72,11 @@ struct RadioParameters
     uint8_t rMax{4};               //!< R_max in Eq. (16)-(17), paper uses 4
     double retransmissionDeficiencySpanDb{15.0}; //!< the "15" constant in Eq. (17)
 
-    /// If true, TX/RX energy accounting uses the discrete nRF52840
-    /// current table (nrf52840-current-table.h) instead of the
-    /// continuous DbmToMw(dbm)/rxPowerPenaltyMw model: TX power is first
-    /// snapped to the nearest available discrete level (matching the
-    /// paper's own ATPC description, Section 3.3) and its current draw
-    /// looked up (official Nordic figures at 0/+8 dBm and RX; linearly
-    /// interpolated elsewhere -- see nrf52840-current-table.h's
-    /// file-level caveats before citing absolute numbers from this mode).
+    /// If true, TX/RX ENERGY ACCOUNTING uses the nRF52840 current table
+    /// (nrf52840-current-table.h) instead of the simplified
+    /// DbmToMw(dbm)/rxPowerPenaltyMw proxy.  This flag does NOT control
+    /// physical TX-power availability: the modeled nRF52840 radio always
+    /// realizes requests on its discrete hardware TXPOWER levels.
     bool useNrf52840Energy{false};
 
     /// HFXO clock standby current (mA) to add back into

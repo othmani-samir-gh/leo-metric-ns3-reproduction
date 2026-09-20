@@ -1,4 +1,5 @@
 #include "route-metrics.h"
+#include "nrf52840-current-table.h"
 #include "wsn-channel.h" // for PrrFromSnrDb, used as an SNR-informed prior for p_l
 
 #include <algorithm>
@@ -203,11 +204,14 @@ LeoMetric::LinkPowerMw(double rAvgRetransmissions, double pTxDbm, const RadioPar
 LinkMetricResult
 LeoMetric::ComputeLinkMetric(const NeighborEntry& entryForPeer, const RadioParameters& radio) const
 {
-    // ReqTXP is clamped to radio.pTxMaxDbm per the paper: "When the ReqTXP
-    // is greater than P_TX,max [dBm], the P_TX,max [dBm] value is used."
-    double pTxDbm = entryForPeer.reqTxPowerKnown
-                        ? std::min(entryForPeer.reqTxPowerDbm, radio.pTxMaxDbm)
-                        : radio.pTxMaxDbm;
+    // ReqTXP is first bounded to the modeled radio range, then realized
+    // on the nRF52840's discrete TXPOWER levels.  This same physical P_TX
+    // is used by WsnRoutingApp for the actual channel transmission.
+    double requestedTxPowerDbm =
+        entryForPeer.reqTxPowerKnown
+            ? std::clamp(entryForPeer.reqTxPowerDbm, radio.pTxMinDbm, radio.pTxMaxDbm)
+            : radio.pTxMaxDbm;
+    double pTxDbm = RealizeNrf52840TxPowerDbm(requestedTxPowerDbm);
 
     // One-way link rejection, Eq. (12)-(13). If we lack the data needed to
     // evaluate the condition, we conservatively treat the link as usable

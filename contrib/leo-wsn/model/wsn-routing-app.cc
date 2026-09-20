@@ -113,6 +113,12 @@ WsnRoutingApp::GetTypeId()
 uint64_t WsnRoutingApp::s_globalFrameCounter = 0;
 
 void
+WsnRoutingApp::ResetGlobalFrameCounter()
+{
+    s_globalFrameCounter = 0;
+}
+
+void
 WsnRoutingApp::NoteFrameSent()
 {
     ++s_globalFrameCounter;
@@ -167,6 +173,11 @@ WsnRoutingApp::Configure(Ptr<WsnNetDevice> device,
     }
 
     m_device->SetReceiveCallback(MakeCallback(&WsnRoutingApp::OnReceive, this));
+
+    // Simulator::Destroy() is the authoritative end-of-run boundary in
+    // scratch/leo-topologies.cc. Reset the shared safety counter there so
+    // independent repetitions cannot inherit each other's frame budget.
+    Simulator::ScheduleDestroy(&WsnRoutingApp::ResetGlobalFrameCounter);
 }
 
 void
@@ -236,6 +247,26 @@ WsnRoutingApp::StopApplication()
     {
         Simulator::Cancel(kv.second.timeoutEvent);
     }
+}
+
+void
+WsnRoutingApp::DoDispose()
+{
+    StopApplication();
+    m_pendingAcks.clear();
+    m_pendingDiscoveryFloodId.clear();
+    m_discoveryCandidates.clear();
+    m_bestFloodMetricSeen.clear();
+    m_floodRelayCount.clear();
+    m_alreadyForwarded.clear();
+
+    if (m_device)
+    {
+        m_device->SetReceiveCallback(WsnReceiveCallback());
+        m_device = nullptr;
+    }
+    m_metric.reset();
+    Application::DoDispose();
 }
 
 // -----------------------------------------------------------------
@@ -416,8 +447,19 @@ WsnRoutingApp::OnAckTimeout(std::string key)
     m_neighborTable.UpdateDeliveryOutcome(neighKey, false, m_emaAlpha); // this attempt failed, Eq. (1)'s p_l input
     if (pu.attempt + 1 > m_macMaxRetries)
     {
-        // Give up: report the max retry count as the observed R_TX sample.
+        // Final per-hop ARQ exhaustion is concrete evidence that this
+        // next hop is currently unusable. Invalidate every route that
+        // depends on it; otherwise later packets keep selecting the same
+        // dead next hop until an unrelated end-to-end timeout happens.
         m_neighborTable.UpdateTxRetransmissions(neighKey, m_macMaxRetries, m_emaAlpha);
+        for (auto& kv : m_routingTable)
+        {
+            RouteEntry& route = kv.second;
+            if (route.valid && route.nextHopId == pu.nextHopId)
+            {
+                route.valid = false;
+            }
+        }
         return;
     }
     SendUnicastReliable(pu.hdr, pu.nextHopId, pu.attempt + 1, pu.payloadBytes);

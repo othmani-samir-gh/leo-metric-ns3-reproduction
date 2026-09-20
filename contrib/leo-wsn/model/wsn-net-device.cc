@@ -81,6 +81,14 @@ WsnNetDevice::WsnNetDevice()
 }
 
 void
+WsnNetDevice::DoDispose()
+{
+    m_receiveCallback = WsnReceiveCallback();
+    m_channel = nullptr;
+    Object::DoDispose();
+}
+
+void
 WsnNetDevice::SetChannel(Ptr<WsnChannel> channel)
 {
     m_channel = channel;

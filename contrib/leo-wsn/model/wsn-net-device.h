@@ -106,6 +106,9 @@ class WsnNetDevice : public Object
     double GetEnergyConsumedMWs() const;
     void AddEnergyMWs(double mws);
 
+  protected:
+    void DoDispose() override;
+
   private:
     Ptr<WsnChannel> m_channel;
     Mac48Address m_address;

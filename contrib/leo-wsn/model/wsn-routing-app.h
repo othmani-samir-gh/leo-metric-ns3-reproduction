@@ -232,6 +232,7 @@ class WsnRoutingApp : public Application
   protected:
     void StartApplication() override;
     void StopApplication() override;
+    void DoDispose() override;
 
   private:
     friend class WsnRoutingAppTestPeer; // regression-test access only; no runtime behavior
@@ -387,6 +388,7 @@ class WsnRoutingApp : public Application
     // discovery-storm overhead (see README's "Assumptions and
     // limitations" -- item 4b).
     static void NoteFrameSent();
+    static void ResetGlobalFrameCounter();
 
     double m_txSlotDurationS{1.0e-3};
     double m_rxSlotDurationS{1.0e-3};

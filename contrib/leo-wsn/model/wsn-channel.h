@@ -157,6 +157,9 @@ class WsnChannel : public Channel
     /// Clears all penalties set via SetLinkSnrPenaltyDb.
     void ClearLinkSnrPenalties();
 
+  protected:
+    void DoDispose() override;
+
   private:
     /// Shared delivery-evaluation logic used by both Send() (looped over
     /// every device) and SendUnicast() (called once for the intended

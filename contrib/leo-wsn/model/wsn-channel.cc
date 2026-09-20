@@ -660,6 +660,23 @@ WsnChannel::WsnChannel()
 }
 
 void
+WsnChannel::DoDispose()
+{
+    // Break the strong channel <-> device ownership cycle explicitly.
+    for (auto& dev : m_devices)
+    {
+        if (dev)
+        {
+            dev->SetChannel(nullptr);
+        }
+    }
+    m_devices.clear();
+    m_linkSnrPenaltyDb.clear();
+    m_rng = nullptr;
+    Channel::DoDispose();
+}
+
+void
 WsnChannel::Add(Ptr<WsnNetDevice> dev)
 {
     m_devices.push_back(dev);
@@ -760,7 +777,13 @@ WsnChannel::DeliverIfSuccessful(Ptr<WsnNetDevice> sender, Ptr<WsnNetDevice> rece
         tag.txPowerDbm = txPowerDbm;
         Ptr<Packet> copy = packet->Copy();
         Mac48Address from = sender->GetAddress();
-        Simulator::ScheduleNow(&WsnNetDevice::Receive, receiver, copy, from, tag);
+        Simulator::ScheduleWithContext(receiver->GetNodeId(),
+                                       Seconds(0),
+                                       &WsnNetDevice::Receive,
+                                       receiver,
+                                       copy,
+                                       from,
+                                       tag);
     }
     // On failure we simply do not schedule delivery; the routing
     // application's retransmission/timeout logic (wsn-routing-app.cc)

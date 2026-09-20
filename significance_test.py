@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
-significance_test.py
+significance_test.py — LEGACY v1.0.0 ONLY.
+
+DO NOT use this script for v1.1.0 release claims. It uses the historical
+independent-group Welch workflow and does not implement the frozen R6 pairing,
+scenario-cell inference, direct routeFingerprint evidence, or Holm family
+correction. Use analysis/r6_statistical_reanalysis.py instead.
+
+Historical description follows.
 
 Test 4 of the pre-publication checklist: pairwise statistical
 significance testing between metrics (LEO vs. hopcount, LEO vs. lqi,

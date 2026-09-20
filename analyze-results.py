@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-analyze-results.py
+analyze-results.py — LEGACY v1.0.0 ONLY.
+
+Retained for historical provenance. It is not the authoritative v1.1.0
+analysis path. Use analysis/r6_statistical_reanalysis.py and the checksum-bound
+R5/R6 artifacts for current results.
+
+Historical description follows.
 
 Post-processes leo-results.csv (produced by run-experiments.sh) into the
 same kind of summary the paper reports in Figs. 5-7:

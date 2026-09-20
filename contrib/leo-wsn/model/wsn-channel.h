@@ -90,6 +90,10 @@ class WsnChannel : public Channel
     static TypeId GetTypeId();
     WsnChannel();
 
+    /// Assign a stable ns-3 RNG stream to the channel delivery process.
+    /// Returns the number of streams consumed (one).
+    int64_t AssignStreams(int64_t stream);
+
     void Add(Ptr<WsnNetDevice> dev);
 
     std::size_t GetNDevices() const override;

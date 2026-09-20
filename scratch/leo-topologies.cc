@@ -61,6 +61,20 @@ using namespace ns3::leo;
 
 NS_LOG_COMPONENT_DEFINE("LeoTopologies");
 
+// Stable RNG stream namespaces. These identities are deliberately
+// independent of object-allocation order so paired runs across metrics
+// keep the same stochastic component identities.
+static constexpr int64_t kChannelRngStream = 10;
+static constexpr int64_t kMobilityRngStreamBase = 1000;
+static constexpr int64_t kMobilityRngStreamStride = 16;
+
+static int64_t
+MobilityRngStreamForNode(uint32_t nodeId)
+{
+    return kMobilityRngStreamBase +
+           static_cast<int64_t>(nodeId) * kMobilityRngStreamStride;
+}
+
 // ---------------------------------------------------------------------
 // Layouts of Fig. 4. Positions are illustrative and parameterized by a
 // nominal inter-node spacing "spacingM"; the *absolute* coordinates used
@@ -421,6 +435,7 @@ main(int argc, char* argv[])
     {
         RngSeedManager::SetSeed(seedBase);
         RngSeedManager::SetRun(run + 1);
+        RngSeedManager::ResetNextStreamIndex();
 
         NodeContainer nodes;
         nodes.Create(nNodes);
@@ -454,6 +469,9 @@ main(int argc, char* argv[])
                 speedStream << "ns3::UniformRandomVariable[Min=" << mobilitySpeedMin << "|Max=" << mobilitySpeedMax
                             << "]";
                 mm->SetAttribute("Speed", StringValue(speedStream.str()));
+                const int64_t consumed = mm->AssignStreams(MobilityRngStreamForNode(i));
+                NS_ABORT_MSG_IF(consumed > kMobilityRngStreamStride,
+                                "RandomWalk2dMobilityModel exceeded reserved RNG stream block");
                 nodes.Get(i)->AggregateObject(mm);
                 mm->SetPosition(positions[i]);
             }
@@ -494,6 +512,9 @@ main(int argc, char* argv[])
                 alloc->SetAttribute("X", StringValue(xStream.str()));
                 alloc->SetAttribute("Y", StringValue(yStream.str()));
                 mm->SetAttribute("PositionAllocator", PointerValue(alloc));
+                const int64_t consumed = mm->AssignStreams(MobilityRngStreamForNode(i));
+                NS_ABORT_MSG_IF(consumed > kMobilityRngStreamStride,
+                                "RandomWaypointMobilityModel exceeded reserved RNG stream block");
                 nodes.Get(i)->AggregateObject(mm);
                 mm->SetPosition(positions[i]); // initial position: the node's Fig.4 layout coordinate
             }
@@ -504,6 +525,8 @@ main(int argc, char* argv[])
         }
 
         Ptr<WsnChannel> channel = CreateObject<WsnChannel>();
+        NS_ABORT_MSG_IF(channel->AssignStreams(kChannelRngStream) != 1,
+                        "WsnChannel RNG stream assignment consumed an unexpected stream count");
         channel->SetEnvironmentFactor(envFactor);
         channel->SetSignalLossPerMeterDbm(signalLossPerMDbm);
 

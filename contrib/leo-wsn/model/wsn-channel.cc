@@ -659,6 +659,13 @@ WsnChannel::WsnChannel()
     m_rng = CreateObject<UniformRandomVariable>();
 }
 
+int64_t
+WsnChannel::AssignStreams(int64_t stream)
+{
+    m_rng->SetStream(stream);
+    return 1;
+}
+
 void
 WsnChannel::DoDispose()
 {

@@ -8,8 +8,6 @@ message: >-
   LEO metric publication (listed under references) for the metric itself.
 type: software
 authors:
-  # REPLACE with the real author list before publishing. Order and
-  # affiliations should match the paper.
   - given-names: Samir
     family-names: Othmani
     affiliation: University of El Oued

@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "gate": "R4_EXPERIMENT_DESIGN_FREEZE",
+  "status": "PASS_CLOSED",
+  "program": "LEO v1.1.0 — Repair & Requalification",
+  "r3_closeout_commit": "9d798854b68928ef846ad129128e900ec3356c21",
+  "r4_frozen_code_and_design_head": "ea0fe66e5e6693ec50d483307ccdce4552491718",
+  "r4_frozen_tree": "c7e82774c19f3b1341ac4f1b64c3840d6f37d885",
+  "manifest": {
+    "path": "experiments/v1.1.0/manifest.json",
+    "sha256": "f36d0510e3dbb0d3c9adffa565c74ad2c5026b77fa1cf04b411ba46f49f4c520",
+    "validated": true
+  },
+  "plan": {
+    "path": "experiments/v1.1.0/frozen_plan.jsonl",
+    "sha256": "fb6d360f6f1f88ea50e59b91d2ae147e0c22c2c3e9ff195212e8fe89c932428e",
+    "configuration_rows": 617,
+    "simulation_rows": 12340,
+    "validated": true
+  },
+  "downloadable_closeout_report": {
+    "filename": "R4_EXPERIMENT_DESIGN_FREEZE_v1.1.0.md",
+    "sha256": "890f3e499dd742d534e272280a5a74a5d8e5627649a087c7da0bb76bf4102347"
+  },
+  "regression": {
+    "suites": 20,
+    "passed": 20,
+    "final_rc": 0
+  },
+  "preflight": {
+    "status": "PASS",
+    "main_rows": 1,
+    "route_rows": 30,
+    "pending_route_rows": 0,
+    "main_sha256": "eab82994f45c86cded486a3b7e0ce2bf02a9abd220f0a6a7eb7e35af629f0cd0",
+    "routes_sha256": "f9f8ed49cf27c65e7c0a16e43faf56a6edc1d42daf52e3679a6a7296e34470cd"
+  },
+  "next_gate": "R5_RAW_DATA_REGENERATION",
+  "production_execution_authority": "FROZEN_PLAN_ONLY"
+}

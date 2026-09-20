@@ -104,6 +104,15 @@ class WsnRoutingAppTestPeer
     {
         return WsnRoutingApp::s_globalFrameCounter;
     }
+
+    static void SendReliable(WsnRoutingApp& app,
+                             WsnHeader hdr,
+                             uint32_t nextHopId,
+                             uint8_t attempt = 0,
+                             uint32_t payloadBytes = 0)
+    {
+        app.SendUnicastReliable(hdr, nextHopId, attempt, payloadBytes);
+    }
 };
 
 static Ptr<WsnRoutingApp>
@@ -449,6 +458,91 @@ class DeliveryContextTest : public TestCase
     uint32_t m_badContexts{0};
 };
 
+
+class PhysicalTxQuantizationTest : public TestCase
+{
+  public:
+    PhysicalTxQuantizationTest()
+        : TestCase("physical nRF52840 TX quantization is independent of energy-accounting mode")
+    {
+    }
+
+  private:
+    void Exercise(bool useNrfEnergy)
+    {
+        auto dev = CreateObject<WsnNetDevice>();
+        dev->SetNodeId(0);
+
+        RadioParameters radio;
+        radio.useNrf52840Energy = useNrfEnergy;
+
+        auto app = CreateObject<WsnRoutingApp>();
+        app->Configure(dev, 0, true, MetricType::LEO, radio, AtpcMode::WITH_FEEDBACK);
+
+        auto& neighbor = WsnRoutingAppTestPeer::Neighbor(*app, 1);
+        neighbor.reqTxPowerKnown = true;
+        neighbor.reqTxPowerDbm = 3.2; // nRF52840 must realize this as +4 dBm
+
+        WsnHeader hdr;
+        hdr.type = FrameType::PING;
+        hdr.originatorId = 0;
+        hdr.targetId = 1;
+        hdr.seq = useNrfEnergy ? 2 : 1;
+
+        WsnRoutingAppTestPeer::SendReliable(*app, hdr, 1);
+
+        NS_TEST_EXPECT_MSG_EQ_TOL(dev->GetTxPowerDbm(),
+                                  4.0,
+                                  1e-12,
+                                  "requested 3.2 dBm must realize to the next supported +4 dBm level");
+
+        app->Dispose();
+        dev->Dispose();
+        Simulator::Destroy();
+    }
+
+    void DoRun() override
+    {
+        Exercise(false);
+        Exercise(true);
+    }
+};
+
+class MetricRealizedTxPowerTest : public TestCase
+{
+  public:
+    MetricRealizedTxPowerTest()
+        : TestCase("LEO Eq.14 uses the same realized TX power as the physical radio")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        RadioParameters radio;
+        radio.useNrf52840Energy = false;
+
+        NeighborEntry e;
+        e.reqTxPowerKnown = true;
+        e.reqTxPowerDbm = 3.2;
+        e.rRxKnown = true;
+        e.rRx = 0.0;
+        e.rTxKnown = true;
+        e.rTx = 0.0;
+
+        LeoMetric metric;
+        LinkMetricResult result = metric.ComputeLinkMetric(e, radio);
+
+        const double realizedDbm = 4.0;
+        const double expected = LeoMetric::LinkPowerMw(0.0, realizedDbm, radio);
+
+        NS_TEST_EXPECT_MSG_EQ_TOL(result.value,
+                                  expected,
+                                  1e-12,
+                                  "metric P_TX must use the +4 dBm level actually transmitted by nRF52840");
+    }
+};
+
 class LinkUsableSuite : public TestSuite
 {
   public:
@@ -547,7 +641,29 @@ static MatchingPingReplySuite g_matchingPingReplySuite;
 static ArqRouteInvalidationSuite g_arqRouteInvalidationSuite;
 static FrameCounterResetSuite g_frameCounterResetSuite;
 static LifecycleCleanupSuite g_lifecycleCleanupSuite;
+class PhysicalTxQuantizationSuite : public TestSuite
+{
+  public:
+    PhysicalTxQuantizationSuite()
+        : TestSuite("leo-r2-physical-tx-quantization", Type::UNIT)
+    {
+        AddTestCase(new PhysicalTxQuantizationTest(), TestCase::Duration::QUICK);
+    }
+};
+
+class MetricRealizedTxPowerSuite : public TestSuite
+{
+  public:
+    MetricRealizedTxPowerSuite()
+        : TestSuite("leo-r2-metric-realized-tx-power", Type::UNIT)
+    {
+        AddTestCase(new MetricRealizedTxPowerTest(), TestCase::Duration::QUICK);
+    }
+};
+
 static DeliveryContextSuite g_deliveryContextSuite;
+static PhysicalTxQuantizationSuite g_physicalTxQuantizationSuite;
+static MetricRealizedTxPowerSuite g_metricRealizedTxPowerSuite;
 
 } // namespace leo
 } // namespace ns3

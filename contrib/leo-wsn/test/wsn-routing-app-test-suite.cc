@@ -609,7 +609,7 @@ class FailedRxEnergyTest : public TestCase
 {
   public:
     FailedRxEnergyTest()
-        : TestCase("failed PRR/CRC reception still consumes receiver energy")
+        : TestCase("failed packet reception still consumes receiver energy")
     {
     }
 

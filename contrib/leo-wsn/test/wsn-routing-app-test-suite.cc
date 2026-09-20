@@ -264,21 +264,61 @@ class MatchingPingReplyTest : public TestCase
     }
 };
 
-class WsnRoutingAppRegressionSuite : public TestSuite
+class LinkUsableSuite : public TestSuite
 {
   public:
-    WsnRoutingAppRegressionSuite()
-        : TestSuite("leo-wsn-routing-regression", Type::UNIT)
+    LinkUsableSuite()
+        : TestSuite("leo-r1-link-usable", Type::UNIT)
     {
         AddTestCase(new LinkUsableEnforcementTest(), TestCase::Duration::QUICK);
+    }
+};
+
+class DiscoveryTimeoutSuite : public TestSuite
+{
+  public:
+    DiscoveryTimeoutSuite()
+        : TestSuite("leo-r1-discovery-timeout", Type::UNIT)
+    {
         AddTestCase(new DiscoveryTimeoutTest(), TestCase::Duration::QUICK);
+    }
+};
+
+class StaleDiscoveryReplySuite : public TestSuite
+{
+  public:
+    StaleDiscoveryReplySuite()
+        : TestSuite("leo-r1-stale-discovery-reply", Type::UNIT)
+    {
         AddTestCase(new StaleDiscoveryReplyTest(), TestCase::Duration::QUICK);
+    }
+};
+
+class StalePingReplySuite : public TestSuite
+{
+  public:
+    StalePingReplySuite()
+        : TestSuite("leo-r1-stale-ping-reply", Type::UNIT)
+    {
         AddTestCase(new StalePingReplyTest(), TestCase::Duration::QUICK);
+    }
+};
+
+class MatchingPingReplySuite : public TestSuite
+{
+  public:
+    MatchingPingReplySuite()
+        : TestSuite("leo-r1-matching-ping-reply", Type::UNIT)
+    {
         AddTestCase(new MatchingPingReplyTest(), TestCase::Duration::QUICK);
     }
 };
 
-static WsnRoutingAppRegressionSuite g_wsnRoutingAppRegressionSuite;
+static LinkUsableSuite g_linkUsableSuite;
+static DiscoveryTimeoutSuite g_discoveryTimeoutSuite;
+static StaleDiscoveryReplySuite g_staleDiscoveryReplySuite;
+static StalePingReplySuite g_stalePingReplySuite;
+static MatchingPingReplySuite g_matchingPingReplySuite;
 
 } // namespace leo
 } // namespace ns3

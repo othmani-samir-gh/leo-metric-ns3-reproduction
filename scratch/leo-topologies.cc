@@ -341,6 +341,7 @@ main(int argc, char* argv[])
     cmd.AddValue("nNodes", "number of nodes including the gateway", nNodes);
     cmd.AddValue("spacingM", "nominal inter-node spacing [m]", spacingM);
     cmd.AddValue("envFactor", "environmental factor N in Eq. (18)", envFactor);
+    cmd.AddValue("signalLossPerMDbm", "signal-loss constant in Eq. (18), dBm", signalLossPerMDbm);
     cmd.AddValue("backgroundNoiseDbm", "noise floor N in Eq. (5)/(9), dBm", backgroundNoiseDbm);
     cmd.AddValue("metric", "hopcount|lqi|lqi-literal|leo", metricStr);
     cmd.AddValue("runs", "number of independent repetitions", runs);
@@ -413,6 +414,8 @@ main(int argc, char* argv[])
                     "--spacingM must be finite and > 0, got " << spacingM);
     NS_ABORT_MSG_IF(!std::isfinite(envFactor) || envFactor <= 0.0,
                     "--envFactor must be finite and > 0, got " << envFactor);
+    NS_ABORT_MSG_IF(!std::isfinite(signalLossPerMDbm) || signalLossPerMDbm > 0.0,
+                    "--signalLossPerMDbm must be finite and <= 0, got " << signalLossPerMDbm);
     NS_ABORT_MSG_IF(!std::isfinite(backgroundNoiseDbm),
                     "--backgroundNoiseDbm must be finite");
     NS_ABORT_MSG_IF(!std::isfinite(interferenceDb) || interferenceDb < 0.0,

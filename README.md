@@ -107,6 +107,18 @@ repository root (see `RELEASE_ASSETS.md`). Then run
 `results/v1.1.0/` dataset, followed by `python3 analysis/r7_make_figures.py`.
 `DATA_DICTIONARY.md` marks the older v1.0.0 analysis path as historical.
 
+## Development provenance and AI assistance
+
+Commits authored as `LEO Repair Bot` and `LEO Release Gate` were produced
+with AI-assisted tooling during the v1.1.0 audit and repair programme, under
+author review. Their correctness is established by evidence rather than by
+authorship: the regression suites under `tests/`, the independent statistical
+reanalysis in `repair_reports/R6_STATISTICAL_REANALYSIS_v1.1.0.md`, and the
+checksum chains in `repair_reports/`. The R6 headline effects were additionally
+recomputed from the raw data by an independent implementation written from the
+method description alone, and agreed to three decimal places across all
+eighteen reported effects.
+
 ## Citing
 
 See `CITATION.cff`. Please cite both this artefact and the original LEO

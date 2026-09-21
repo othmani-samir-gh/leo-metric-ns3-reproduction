@@ -57,6 +57,8 @@ WsnHeader::Serialize(Buffer::Iterator start) const
     double b = pThDbm;
     start.Write(reinterpret_cast<const uint8_t*>(&b), sizeof(double));
     start.WriteHtonU32(intendedNextHopId);
+    start.WriteHtonU64(routeFingerprint);
+    start.WriteHtonU32(routeHopCount);
 }
 
 uint32_t
@@ -82,13 +84,15 @@ WsnHeader::Deserialize(Buffer::Iterator start)
     start.Read(reinterpret_cast<uint8_t*>(&b), sizeof(double));
     pThDbm = b;
     intendedNextHopId = start.ReadNtohU32();
+    routeFingerprint = start.ReadNtohU64();
+    routeHopCount = start.ReadNtohU32();
     return GetSerializedSize();
 }
 
 uint32_t
 WsnHeader::GetSerializedSize() const
 {
-    return 1 + 4 + 4 + 4 + 4 + sizeof(double) + 4 + 1 + 1 + 4 + 1 + sizeof(double) + sizeof(double) + 4;
+    return 1 + 4 + 4 + 4 + 4 + sizeof(double) + 4 + 1 + 1 + 4 + 1 + sizeof(double) + sizeof(double) + 4 + 8 + 4;
 }
 
 void
@@ -112,6 +116,24 @@ WsnRoutingApp::GetTypeId()
 
 uint64_t WsnRoutingApp::s_globalFrameCounter = 0;
 
+uint64_t
+MixRouteFingerprint(uint64_t hash, uint32_t nodeId)
+{
+    static constexpr uint64_t kFnvPrime = 1099511628211ULL;
+    for (int shift : {24, 16, 8, 0})
+    {
+        hash ^= static_cast<uint8_t>((nodeId >> shift) & 0xffu);
+        hash *= kFnvPrime;
+    }
+    return hash;
+}
+
+void
+WsnRoutingApp::ResetGlobalFrameCounter()
+{
+    s_globalFrameCounter = 0;
+}
+
 void
 WsnRoutingApp::NoteFrameSent()
 {
@@ -123,7 +145,7 @@ WsnRoutingApp::NoteFrameSent()
                         << " -- almost certainly a runaway flood/relay/routing"
                            " loop rather than legitimate traffic for a small"
                            " topology. Aborting instead of hanging; check"
-                           " kMaxHopCount/kMaxRelaysPerFlood in"
+                           " kMaxHopCount/m_maxRelaysPerFlood in"
                            " wsn-routing-app.h and reduce nNodes/spacing/"
                            " envFactor to sanity-check connectivity first.");
     }
@@ -167,19 +189,45 @@ WsnRoutingApp::Configure(Ptr<WsnNetDevice> device,
     }
 
     m_device->SetReceiveCallback(MakeCallback(&WsnRoutingApp::OnReceive, this));
+    m_device->SetReceiveFailureCallback(MakeCallback(&WsnRoutingApp::OnReceiveFailed, this));
+
+    // Simulator::Destroy() is the authoritative end-of-run boundary in
+    // scratch/leo-topologies.cc. Reset the shared safety counter there so
+    // independent repetitions cannot inherit each other's frame budget.
+    Simulator::ScheduleDestroy(&WsnRoutingApp::ResetGlobalFrameCounter);
 }
 
 void
 WsnRoutingApp::SetTiming(double txSlotDurationS, double rxSlotDurationS, uint8_t macMaxRetries)
 {
+    NS_ABORT_MSG_IF(!std::isfinite(txSlotDurationS) || txSlotDurationS <= 0.0,
+                    "TX slot duration must be finite and > 0, got " << txSlotDurationS);
+    NS_ABORT_MSG_IF(!std::isfinite(rxSlotDurationS) || rxSlotDurationS <= 0.0,
+                    "RX slot duration must be finite and > 0, got " << rxSlotDurationS);
+    NS_ABORT_MSG_IF(macMaxRetries > kMaxRetransmissionField,
+                    "MAC retry cap must fit the protocol retransmission field [0,"
+                        << static_cast<uint32_t>(kMaxRetransmissionField)
+                        << "], got " << static_cast<uint32_t>(macMaxRetries));
     m_txSlotDurationS = txSlotDurationS;
     m_rxSlotDurationS = rxSlotDurationS;
     m_macMaxRetries = macMaxRetries;
 }
 
 void
+WsnRoutingApp::SetAckTimeoutS(double seconds)
+{
+    NS_ABORT_MSG_IF(!std::isfinite(seconds) || seconds <= 0.0,
+                    "ACK timeout must be finite and > 0, got " << seconds);
+    m_ackTimeoutS = seconds;
+}
+
+void
 WsnRoutingApp::SetPhyTiming(double bitrateBps, double radioOverheadS)
 {
+    NS_ABORT_MSG_IF(!std::isfinite(bitrateBps) || bitrateBps <= 0.0,
+                    "PHY bitrate must be finite and > 0, got " << bitrateBps);
+    NS_ABORT_MSG_IF(!std::isfinite(radioOverheadS) || radioOverheadS < 0.0,
+                    "radio overhead must be finite and >= 0, got " << radioOverheadS);
     m_bitrateBps = bitrateBps;
     m_radioOverheadS = radioOverheadS;
     m_usePacketSizeTiming = true;
@@ -194,15 +242,32 @@ WsnRoutingApp::SetPingPayloadBytes(uint32_t bytes)
 void
 WsnRoutingApp::SetEmaAlpha(double alpha)
 {
-    NS_ABORT_MSG_IF(alpha < 0.0 || alpha > 1.0, "EMA alpha must be in [0,1], got " << alpha);
+    NS_ABORT_MSG_IF(!std::isfinite(alpha) || alpha < 0.0 || alpha > 1.0,
+                    "EMA alpha must be finite and in [0,1], got " << alpha);
     m_emaAlpha = alpha;
 }
 
 void
 WsnRoutingApp::SetDiscoveryWindowS(double seconds)
 {
-    NS_ABORT_MSG_IF(seconds < 0.0, "discovery window must be >= 0, got " << seconds);
+    NS_ABORT_MSG_IF(!std::isfinite(seconds) || seconds < 0.0,
+                    "discovery window must be finite and >= 0, got " << seconds);
     m_discoveryWindowS = seconds;
+}
+
+void
+WsnRoutingApp::SetDiscoveryTimeoutS(double seconds)
+{
+    NS_ABORT_MSG_IF(!std::isfinite(seconds) || seconds <= 0.0,
+                    "discovery timeout must be finite and > 0, got " << seconds);
+    m_discoveryTimeoutS = seconds;
+}
+
+void
+WsnRoutingApp::SetMaxRelaysPerFlood(uint8_t cap)
+{
+    NS_ABORT_MSG_IF(cap == 0, "max relays per flood must be >= 1");
+    m_maxRelaysPerFlood = cap;
 }
 
 void
@@ -214,11 +279,41 @@ void
 WsnRoutingApp::StopApplication()
 {
     Simulator::Cancel(m_pingTimer);
-    Simulator::Cancel(m_timeoutEvent);
+    for (auto& kv : m_pingTimeoutEvents)
+    {
+        Simulator::Cancel(kv.second);
+    }
+    m_pingTimeoutEvents.clear();
+    for (auto& kv : m_discoveryTimeoutEvents)
+    {
+        Simulator::Cancel(kv.second);
+    }
+    m_discoveryTimeoutEvents.clear();
     for (auto& kv : m_pendingAcks)
     {
         Simulator::Cancel(kv.second.timeoutEvent);
     }
+}
+
+void
+WsnRoutingApp::DoDispose()
+{
+    StopApplication();
+    m_pendingAcks.clear();
+    m_pendingDiscoveryFloodId.clear();
+    m_discoveryCandidates.clear();
+    m_bestFloodMetricSeen.clear();
+    m_floodRelayCount.clear();
+    m_alreadyForwarded.clear();
+
+    if (m_device)
+    {
+        m_device->SetReceiveCallback(WsnReceiveCallback());
+        m_device->SetReceiveFailureCallback(WsnReceiveCallback());
+        m_device = nullptr;
+    }
+    m_metric.reset();
+    Application::DoDispose();
 }
 
 // -----------------------------------------------------------------
@@ -279,10 +374,28 @@ WsnRoutingApp::ChargeEnergy(FrameType type, double txPowerDbm, bool isTx, uint32
     m_device->AddEnergyMWs(energyMWs);
 }
 
+void
+WsnRoutingApp::ChargeRxListeningEnergy(FrameType type, double durationS)
+{
+    NS_ABORT_MSG_IF(!std::isfinite(durationS) || durationS < 0.0,
+                    "ChargeRxListeningEnergy: invalid duration " << durationS);
+
+    double powerMw = m_radio.useNrf52840Energy
+                         ? Nrf52840RxPowerMw(m_bitrateBps, m_radio.hfxoStandbyCurrentMa)
+                         : m_radio.rxPowerPenaltyMw;
+    double energyMWs = powerMw * durationS;
+    NS_ABORT_MSG_IF(!std::isfinite(energyMWs) || energyMWs < 0.0,
+                    "ChargeRxListeningEnergy: non-physical energy " << energyMWs);
+
+    m_stats.energyConsumedMWs += energyMWs;
+    m_stats.energyByType[type] += energyMWs;
+    m_device->AddEnergyMWs(energyMWs);
+}
+
 // -----------------------------------------------------------------
 // Link metric helper
 // -----------------------------------------------------------------
-double
+LinkMetricResult
 WsnRoutingApp::LinkMetricTo(uint32_t neighborId) const
 {
     // NeighborTable is keyed by Ipv4Address in the generic module (see
@@ -295,12 +408,10 @@ WsnRoutingApp::LinkMetricTo(uint32_t neighborId) const
         // Unknown neighbor: paper's fallback for hop-count/LQI defaults
         // (C{l}=7 for unknown p_l, Eq. 1) and for LEO (R = R_max, Eq. 16).
         NeighborEntry blank;
-        auto res = m_metric->ComputeLinkMetric(blank, m_radio);
-        return res.value;
+        return m_metric->ComputeLinkMetric(blank, m_radio);
     }
     const NeighborEntry& e = m_neighborTable.GetTable().at(key);
-    auto res = m_metric->ComputeLinkMetric(e, m_radio);
-    return res.value;
+    return m_metric->ComputeLinkMetric(e, m_radio);
 }
 
 // -----------------------------------------------------------------
@@ -315,8 +426,7 @@ WsnRoutingApp::BroadcastFrame(WsnHeader hdr, uint32_t payloadBytes)
     pkt->AddHeader(hdr);
     // Broadcasts always use max power: "transmission power is always set
     // to the maximum possible value when broadcasting" (Section 3.3).
-    double txPowerDbm =
-        m_radio.useNrf52840Energy ? SnapToNearestAvailableTxPowerDbm(m_radio.pTxMaxDbm) : m_radio.pTxMaxDbm;
+    double txPowerDbm = RealizeNrf52840TxPowerDbm(m_radio.pTxMaxDbm);
     m_device->SetTxPowerDbm(txPowerDbm);
     m_device->Send(pkt);
     ChargeEnergy(hdr.type, txPowerDbm, true, hdr.GetSerializedSize() + payloadBytes);
@@ -348,18 +458,16 @@ WsnRoutingApp::SendUnicastReliable(WsnHeader hdr, uint32_t nextHopId, uint8_t at
     hdr.intendedNextHopId = nextHopId; // see WsnHeader::intendedNextHopId doc comment
 
     Ipv4Address key(nextHopId);
-    double txPowerDbm = m_radio.pTxMaxDbm;
+    double requestedTxPowerDbm = m_radio.pTxMaxDbm;
     if (m_neighborTable.Has(key) && m_neighborTable.Get(key).reqTxPowerKnown)
     {
-        txPowerDbm = std::min(m_neighborTable.Get(key).reqTxPowerDbm, m_radio.pTxMaxDbm);
+        requestedTxPowerDbm =
+            std::clamp(m_neighborTable.Get(key).reqTxPowerDbm, m_radio.pTxMinDbm, m_radio.pTxMaxDbm);
     }
-    if (m_radio.useNrf52840Energy)
-    {
-        // Paper (Section 3.3): "P_TX [dBm] is set to the nearest greater
-        // or equal available transmission power by the transmitter, the
-        // same as ATPC would use."
-        txPowerDbm = SnapToNearestAvailableTxPowerDbm(txPowerDbm);
-    }
+    // Hardware realization is a radio property, not an energy-accounting
+    // option.  Use this exact realized value for channel delivery and
+    // subsequent energy accounting.
+    double txPowerDbm = RealizeNrf52840TxPowerDbm(requestedTxPowerDbm);
 
     if (m_atpcMode == AtpcMode::WITHOUT_FEEDBACK)
     {
@@ -397,12 +505,29 @@ WsnRoutingApp::OnAckTimeout(std::string key)
     PendingUnicast pu = it->second;
     m_pendingAcks.erase(it);
 
+    // The sender kept its receiver on while waiting for an ACK that never
+    // arrived.  Successful ACK frame reception is already charged in
+    // OnReceive(); this explicitly accounts only the missing-ACK listen
+    // window that was previously free.
+    ChargeRxListeningEnergy(FrameType::ACK, m_ackTimeoutS);
+
     Ipv4Address neighKey(pu.nextHopId);
     m_neighborTable.UpdateDeliveryOutcome(neighKey, false, m_emaAlpha); // this attempt failed, Eq. (1)'s p_l input
     if (pu.attempt + 1 > m_macMaxRetries)
     {
-        // Give up: report the max retry count as the observed R_TX sample.
+        // Final per-hop ARQ exhaustion is concrete evidence that this
+        // next hop is currently unusable. Invalidate every route that
+        // depends on it; otherwise later packets keep selecting the same
+        // dead next hop until an unrelated end-to-end timeout happens.
         m_neighborTable.UpdateTxRetransmissions(neighKey, m_macMaxRetries, m_emaAlpha);
+        for (auto& kv : m_routingTable)
+        {
+            RouteEntry& route = kv.second;
+            if (route.valid && route.nextHopId == pu.nextHopId)
+            {
+                route.valid = false;
+            }
+        }
         return;
     }
     SendUnicastReliable(pu.hdr, pu.nextHopId, pu.attempt + 1, pu.payloadBytes);
@@ -459,6 +584,20 @@ WsnRoutingApp::HandleAck(const WsnHeader& hdr, uint32_t fromId)
 // Reception dispatch
 // -----------------------------------------------------------------
 void
+WsnRoutingApp::OnReceiveFailed(Ptr<Packet> packet, Mac48Address /*from*/, WsnLinkInfoTag /*tag*/)
+{
+    uint32_t frameBytes = packet->GetSize();
+    WsnHeader hdr;
+    packet->RemoveHeader(hdr);
+
+    // For unicast the channel calls this only on the intended receiver.
+    // Broadcast frames are listened to by every attached receiver.
+    // A failed decode consumes radio RX energy but MUST NOT update
+    // neighbor/routing/ATPC state or emit an ACK.
+    ChargeEnergy(hdr.type, 0.0, false, frameBytes);
+}
+
+void
 WsnRoutingApp::OnReceive(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag tag)
 {
     uint32_t frameBytes = packet->GetSize(); // capture before RemoveHeader consumes the header
@@ -495,6 +634,8 @@ WsnRoutingApp::OnReceive(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag t
     entry.lslKnown = true;
     entry.lastRssiDbm = tag.rssiDbm;
     entry.rssiKnown = true;
+    entry.lastSnrDb = tag.snrDb;
+    entry.snrKnown = true;
     m_neighborTable.UpdateRxRetransmissions(key, hdr.retransmissionCount, m_emaAlpha); // hdr, not tag: see WsnLinkInfoTag doc
     if (!entry.maxTxPowerKnown)
     {
@@ -566,13 +707,13 @@ WsnRoutingApp::OnReceive(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag t
         ack.pTxAdjDb = pendingTxAdjDb; // Eq. (7), staged above; 0 if not in WITH_FEEDBACK mode
         Ptr<Packet> ackPkt = Create<Packet>();
         ackPkt->AddHeader(ack);
-        double ackPowerDbm = m_neighborTable.Has(key) && m_neighborTable.Get(key).reqTxPowerKnown
-                                  ? std::min(m_neighborTable.Get(key).reqTxPowerDbm, m_radio.pTxMaxDbm)
-                                  : m_radio.pTxMaxDbm;
-        if (m_radio.useNrf52840Energy)
-        {
-            ackPowerDbm = SnapToNearestAvailableTxPowerDbm(ackPowerDbm);
-        }
+        double requestedAckPowerDbm =
+            m_neighborTable.Has(key) && m_neighborTable.Get(key).reqTxPowerKnown
+                ? std::clamp(m_neighborTable.Get(key).reqTxPowerDbm,
+                             m_radio.pTxMinDbm,
+                             m_radio.pTxMaxDbm)
+                : m_radio.pTxMaxDbm;
+        double ackPowerDbm = RealizeNrf52840TxPowerDbm(requestedAckPowerDbm);
         m_device->SetTxPowerDbm(ackPowerDbm);
         m_device->SendTo(ackPkt, fromId); // point-to-point: evaluated only for fromId
         ChargeEnergy(FrameType::ACK, ackPowerDbm, true, ack.GetSerializedSize());
@@ -603,6 +744,16 @@ WsnRoutingApp::OnReceive(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag t
 void
 WsnRoutingApp::StartPathDiscovery(uint32_t targetId)
 {
+    // A target may only have one locally-current discovery transaction.
+    // If a caller explicitly restarts it, cancel the previous liveness
+    // timer before replacing the authoritative flood id.
+    auto oldTimeout = m_discoveryTimeoutEvents.find(targetId);
+    if (oldTimeout != m_discoveryTimeoutEvents.end())
+    {
+        Simulator::Cancel(oldTimeout->second);
+        m_discoveryTimeoutEvents.erase(oldTimeout);
+    }
+
     WsnHeader hdr;
     hdr.type = FrameType::PATH_DISCOVERY;
     hdr.originatorId = m_nodeId;
@@ -613,14 +764,39 @@ WsnRoutingApp::StartPathDiscovery(uint32_t targetId)
     hdr.hopCount = 0;
     m_pendingDiscoveryFloodId[targetId] = hdr.floodId;
     m_bestFloodMetricSeen[m_nodeId][hdr.floodId] = 0.0;
+    m_discoveryTimeoutEvents[targetId] =
+        Simulator::Schedule(Seconds(m_discoveryTimeoutS),
+                            &WsnRoutingApp::OnDiscoveryTimeout,
+                            this,
+                            targetId,
+                            hdr.floodId);
     BroadcastFrame(hdr);
+}
+
+void
+WsnRoutingApp::OnDiscoveryTimeout(uint32_t targetId, uint32_t floodId)
+{
+    // Transaction-safe timeout: a timer belonging to an older flood must
+    // never clear a newer discovery for the same target.
+    auto pending = m_pendingDiscoveryFloodId.find(targetId);
+    if (pending == m_pendingDiscoveryFloodId.end() || pending->second != floodId)
+    {
+        return;
+    }
+
+    m_pendingDiscoveryFloodId.erase(pending);
+    m_discoveryTimeoutEvents.erase(targetId);
 }
 
 void
 WsnRoutingApp::HandlePathDiscovery(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& /*tag*/)
 {
-    double linkMetric = LinkMetricTo(fromId);
-    double newAccumulated = hdr.accumulatedMetric + linkMetric;
+    LinkMetricResult link = LinkMetricTo(fromId);
+    if (!link.linkUsable)
+    {
+        return; // Eq. (12)-(13): one-way/unusable links cannot enter a route.
+    }
+    double newAccumulated = hdr.accumulatedMetric + link.value;
     uint32_t newHopCount = hdr.hopCount + 1;
 
     if (newHopCount > kMaxHopCount)
@@ -672,9 +848,9 @@ WsnRoutingApp::HandlePathDiscovery(WsnHeader hdr, uint32_t fromId, const WsnLink
     }
 
     auto& relayCount = m_floodRelayCount[hdr.originatorId][hdr.floodId];
-    if (!firstTime && relayCount >= kMaxRelaysPerFlood)
+    if (!firstTime && relayCount >= m_maxRelaysPerFlood)
     {
-        return; // re-relay budget exhausted for this flood, see kMaxRelaysPerFlood
+        return; // re-relay budget exhausted for this flood, see m_maxRelaysPerFlood
     }
     relayCount++;
     seenForFlood[hdr.floodId] = newAccumulated;
@@ -724,20 +900,43 @@ WsnRoutingApp::ReplyBestCandidate(uint32_t originatorId, uint32_t floodId)
 void
 WsnRoutingApp::HandlePathDiscoveryReply(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& /*tag*/)
 {
-    double linkMetric = LinkMetricTo(fromId);
-    double newAccumulated = hdr.accumulatedMetric + linkMetric;
+    // Transaction identity is checked BEFORE any routing-table mutation.
+    // At the originator, only the exact currently pending flood may
+    // complete discovery. At a relay, require that this node actually
+    // relayed the same flood and has not since observed a newer flood from
+    // that originator.
+    if (m_nodeId == hdr.originatorId)
+    {
+        auto pending = m_pendingDiscoveryFloodId.find(hdr.targetId);
+        if (pending == m_pendingDiscoveryFloodId.end() || pending->second != hdr.floodId)
+        {
+            return;
+        }
+    }
+    else
+    {
+        auto seenOrigin = m_bestFloodMetricSeen.find(hdr.originatorId);
+        if (seenOrigin == m_bestFloodMetricSeen.end() ||
+            seenOrigin->second.find(hdr.floodId) == seenOrigin->second.end() ||
+            seenOrigin->second.rbegin()->first != hdr.floodId)
+        {
+            return;
+        }
+    }
+
+    LinkMetricResult link = LinkMetricTo(fromId);
+    if (!link.linkUsable)
+    {
+        return; // Eq. (12)-(13): reply path must also remain bidirectional.
+    }
+    double newAccumulated = hdr.accumulatedMetric + link.value;
     uint32_t newHopCount = hdr.hopCount + 1;
 
     if (newHopCount > kMaxHopCount)
     {
-        // TTL exceeded: most likely a transient routing loop caused by
-        // asynchronous LEO metric updates (see kMaxHopCount doc comment).
-        // Drop rather than forward forever.
         return;
     }
 
-    // Build the forward route toward the discovery's destination (targetId)
-    // using the metric accumulated along the reply's path.
     RouteEntry& re = m_routingTable[hdr.targetId];
     re.valid = true;
     re.nextHopId = fromId;
@@ -746,7 +945,12 @@ WsnRoutingApp::HandlePathDiscoveryReply(WsnHeader hdr, uint32_t fromId, const Ws
 
     if (m_nodeId == hdr.originatorId)
     {
-        // Discovery complete.
+        auto timeout = m_discoveryTimeoutEvents.find(hdr.targetId);
+        if (timeout != m_discoveryTimeoutEvents.end())
+        {
+            Simulator::Cancel(timeout->second);
+            m_discoveryTimeoutEvents.erase(timeout);
+        }
         m_pendingDiscoveryFloodId.erase(hdr.targetId);
         return;
     }
@@ -862,9 +1066,14 @@ WsnRoutingApp::SendNextPing()
         hdr.seq = m_pingSeq;
         hdr.hopCount = 0;
         hdr.accumulatedMetric = 0.0;
+        static constexpr uint64_t kRouteFingerprintOffset = 14695981039346656037ULL;
+        hdr.routeFingerprint = MixRouteFingerprint(kRouteFingerprintOffset, m_nodeId);
+        hdr.routeHopCount = 0;
+        m_stats.pingTrace[{target, m_pingSeq}] = {"pending", 0, 0};
         m_stats.pingSent++;
         SendUnicastReliable(hdr, rtIt->second.nextHopId, 0, m_pingPayloadBytes);
-        m_timeoutEvent =
+        auto pingKey = std::make_pair(target, m_pingSeq);
+        m_pingTimeoutEvents[pingKey] =
             Simulator::Schedule(Seconds(kPingTimeoutS), &WsnRoutingApp::OnPingTimeout, this, target, m_pingSeq);
     }
     else
@@ -874,6 +1083,7 @@ WsnRoutingApp::SendNextPing()
         // (which now means "sent but no reply arrived in time"). Add both
         // columns together for a Fig. 6-equivalent total failure count.
         m_stats.pingNoRoute++;
+        m_stats.pingTrace[{target, m_pingSeq}] = {"no_route", 0, 0};
     }
 
     m_pingSeq++;
@@ -884,17 +1094,24 @@ WsnRoutingApp::SendNextPing()
 void
 WsnRoutingApp::OnPingTimeout(uint32_t targetId, uint32_t seq)
 {
-    // If the corresponding PING_REPLY has already reset this event this
-    // call is a stale no-op; a real ns-3 EventId cancellation at the reply
-    // handler avoids double counting (see HandlePingReply).
+    auto pingKey = std::make_pair(targetId, seq);
+    auto timeout = m_pingTimeoutEvents.find(pingKey);
+    if (timeout == m_pingTimeoutEvents.end())
+    {
+        return; // matching reply already completed this exact transaction
+    }
+    m_pingTimeoutEvents.erase(timeout);
+
     m_stats.pingTimeouts++;
-    // Invalidate the stale route and force rediscovery on the next attempt.
+    m_stats.pingTrace[pingKey] = {"timeout", 0, 0};
     auto it = m_routingTable.find(targetId);
     if (it != m_routingTable.end())
     {
         it->second.valid = false;
     }
-    m_pendingDiscoveryFloodId.erase(targetId);
+
+    // StartPathDiscovery is restart-safe: it cancels any older discovery
+    // timeout and replaces the target's authoritative flood id.
     StartPathDiscovery(targetId);
 }
 
@@ -920,10 +1137,17 @@ WsnRoutingApp::HandlePing(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& 
         if (it != m_routingTable.end() && it->second.valid && it->second.nextHopId != fromId)
         {
             m_alreadyForwarded.insert(fkey);
+            hdr.routeFingerprint = MixRouteFingerprint(hdr.routeFingerprint, m_nodeId);
+            hdr.routeHopCount++;
             SendUnicastReliable(hdr, it->second.nextHopId);
         }
         return;
     }
+
+    // The destination itself is part of the observed forward route.
+    hdr.routeFingerprint = MixRouteFingerprint(hdr.routeFingerprint, m_nodeId);
+    hdr.routeHopCount++;
+
     auto it = m_routingTable.find(hdr.originatorId);
     if (it == m_routingTable.end() || !it->second.valid)
     {
@@ -938,6 +1162,8 @@ WsnRoutingApp::HandlePing(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& 
     reply.seq = hdr.seq;
     reply.hopCount = 0;
     reply.accumulatedMetric = 0.0;
+    reply.routeFingerprint = hdr.routeFingerprint;
+    reply.routeHopCount = hdr.routeHopCount;
     SendUnicastReliable(reply, it->second.nextHopId, 0, m_pingPayloadBytes);
 }
 
@@ -966,8 +1192,18 @@ WsnRoutingApp::HandlePingReply(WsnHeader hdr, uint32_t fromId, const WsnLinkInfo
         }
         return;
     }
-    // We are the gateway that sent the original PING: cancel its timeout.
-    Simulator::Cancel(m_timeoutEvent);
+    // We are the gateway that sent the original PING. Only the exact
+    // (target,seq) transaction may cancel its timeout; a delayed reply for
+    // an older ping is otherwise a harmless stale packet.
+    auto pingKey = std::make_pair(hdr.targetId, hdr.seq);
+    auto timeout = m_pingTimeoutEvents.find(pingKey);
+    if (timeout == m_pingTimeoutEvents.end())
+    {
+        return;
+    }
+    Simulator::Cancel(timeout->second);
+    m_pingTimeoutEvents.erase(timeout);
+    m_stats.pingTrace[pingKey] = {"success", hdr.routeFingerprint, hdr.routeHopCount};
 }
 
 } // namespace leo

@@ -34,7 +34,7 @@
 #ifndef LEO_WSN_CHANNEL_H
 #define LEO_WSN_CHANNEL_H
 
-#include <ns3/channel.h>
+#include <ns3/object.h>
 #include <ns3/mobility-model.h>
 #include <ns3/packet.h>
 #include <ns3/random-variable-stream.h>
@@ -84,16 +84,23 @@ double LinkSignalLossDb(double distanceM, double environmentFactor, double signa
  * success/failure per receiver -- i.e. per link, matching the paper's
  * link-level PRR/PER framing.
  */
-class WsnChannel : public Channel
+class WsnChannel : public Object
 {
   public:
     static TypeId GetTypeId();
     WsnChannel();
 
+    /// Assign a stable ns-3 RNG stream to the channel delivery process.
+    /// Returns the number of streams consumed (one).
+    int64_t AssignStreams(int64_t stream);
+
     void Add(Ptr<WsnNetDevice> dev);
 
-    std::size_t GetNDevices() const override;
-    Ptr<NetDevice> GetDevice(std::size_t i) const override;
+    std::size_t GetNDevices() const;
+
+    /// Direct accessor for this abstraction's actual device type.
+    /// Returns nullptr when i is out of range.
+    Ptr<WsnNetDevice> GetWsnDevice(std::size_t i) const;
 
     /**
      * \brief Called by a WsnNetDevice to broadcast \p packet at
@@ -156,6 +163,9 @@ class WsnChannel : public Channel
 
     /// Clears all penalties set via SetLinkSnrPenaltyDb.
     void ClearLinkSnrPenalties();
+
+  protected:
+    void DoDispose() override;
 
   private:
     /// Shared delivery-evaluation logic used by both Send() (looped over

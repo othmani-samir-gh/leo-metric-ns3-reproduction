@@ -1,0 +1,41 @@
+{
+  "checks": {
+    "citation_version": "1.1.0",
+    "current_readme_claim_scan": "PASS",
+    "dataset_release_asset_integrity": "PASS",
+    "r1_r4_regression_suites": "20/20 PASS",
+    "r4_manifest_validator": "PASS",
+    "r4_plan_validator": "PASS",
+    "r5_checksum_chain": "2478/2478 PASS",
+    "r6_checksum_chain": "14/14 PASS",
+    "r7_checksum_chain_verified_before_packaging": "23/23 PASS",
+    "r8_asan_lsan_ubsan_none_walk_waypoint": "PASS",
+    "r8_claim_data_consistency": "15/15 PASS",
+    "r8_deterministic_replay_none_walk_waypoint": "PASS",
+    "r8_equation_oracle": "PASS",
+    "scientific_code_drift_since_r5_execution": "NONE"
+  },
+  "dataset_asset": {
+    "compressed_size_bytes": 13829224,
+    "path_local": "/home/pharmaco/projects/LEO_v1.1.0_Release_Assets/leo-v1.1.0-results.tar.gz",
+    "sha256": "e32b25adcca49abcbe732ba75d80390d07542128395fca5332af3235cded3783",
+    "upload_status": "HUMAN_GATE_PENDING_UPLOAD"
+  },
+  "external_review": {
+    "ASTRA": "NOT RUN \u2014 callable binding unavailable",
+    "substitution": "NONE"
+  },
+  "human_gates": [
+    "Confirm the final author list in CITATION.cff.",
+    "Upload the dataset asset and verify its SHA256 at the destination.",
+    "Create the v1.1.0 tag/release only after author and asset checks are complete."
+  ],
+  "nonblocking_recommendations": [
+    "Add CI for future automated regression/validator checks."
+  ],
+  "pre_closeout_head": "82cd0fa0d9caf041d6226b6cd6447d8374afafad",
+  "pre_closeout_tree": "4d4707fc2c8ed529ed0b0bd175786fb9a14cf1a3",
+  "public_release_authorized": false,
+  "status": "PASS_WITH_RELEASE_HUMAN_GATE",
+  "technical_release_candidate_eligible": true
+}

@@ -1,0 +1,42 @@
+{
+  "fig1_energy_vs_hopcount.svg": {
+    "figure_sha256": "863b83ee4bbfe97f48f4bc8324e265b2dd14a5205576b0fe3efce24792c2266b",
+    "source": "primary_summary.csv",
+    "source_sha256": "74c1e1e23245ddc05e4a096f53dc288654003e2b9073c2b207690709b909d76a"
+  },
+  "fig2_energy_vs_lqi.svg": {
+    "figure_sha256": "ef5dbf8d7a545706f0acf8043f4f4ceb1d3ed97702652d3020b56a209fc479c9",
+    "source": "primary_summary.csv",
+    "source_sha256": "74c1e1e23245ddc05e4a096f53dc288654003e2b9073c2b207690709b909d76a"
+  },
+  "fig3_availability_vs_hopcount.svg": {
+    "figure_sha256": "b0b5cab1d8f1a6b46a5c968486a8123e34ee468a42fdeb79c030b478d249aa0a",
+    "source": "primary_summary.csv",
+    "source_sha256": "74c1e1e23245ddc05e4a096f53dc288654003e2b9073c2b207690709b909d76a"
+  },
+  "fig4_route_divergence.svg": {
+    "figure_sha256": "e647322f244a8bc677937ca92664713b864674fb1c4121ab77af46063c91e6c9",
+    "source": "primary_route_divergence.csv",
+    "source_sha256": "7708559a2276a5f2004a3c8cc01b3e60c2809ae4e017baa5b35e954dc9ba1efc"
+  },
+  "fig5_nrf_energy_ratio.svg": {
+    "figure_sha256": "538d44425e8b2241dd5d5c246a96ca8eae6da204f4ebffe0ac84093caa555102",
+    "source": "nrf52840_energy_sensitivity.csv",
+    "source_sha256": "79cd1b8916c44285c9e902177cf6d30b6b92c3fe63b9095cb2ee85932a35bf91"
+  },
+  "fig6_ofat_energy_sensitivity.svg": {
+    "figure_sha256": "51b84abb6949bbc9697fccd447b33767583fbbc53c7b62284361b5af634ce1a1",
+    "source": "ofat_sensitivity.csv",
+    "source_sha256": "5b4c42e952652b01d9fb72cd681f512fa6c7a6e9f4dea3c0a49cc65b413849df"
+  },
+  "fig7_mobility_energy_exploratory.svg": {
+    "figure_sha256": "5856aee89277b461dacb44622ab7b8ef82bccc4e9cd5e77f8bbcdf6c940d69e9",
+    "source": "mobility_exploratory.csv",
+    "source_sha256": "fd7715fcb6a8a00086942ceaf5f0e18a13d2cd9a58cfadc32e3a9bc8282605d0"
+  },
+  "fig8_interference_energy_limited.svg": {
+    "figure_sha256": "749cbab65b4828d12f847696673b69827d3b17b054c0a72fd049b79ae289627f",
+    "source": "primary_summary.csv",
+    "source_sha256": "74c1e1e23245ddc05e4a096f53dc288654003e2b9073c2b207690709b909d76a"
+  }
+}

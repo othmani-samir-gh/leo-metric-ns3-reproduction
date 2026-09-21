@@ -45,6 +45,12 @@ struct NeighborEntry
     double lastRssiDbm{0.0}; //!< most recently measured RSSI from this neighbor
     bool rssiKnown{false};
 
+    /// Effective SNR reported by the channel for the most recent decoded
+    /// reception. Unlike RSSI-noise reconstruction, this already includes
+    /// any link-specific interference penalty applied by WsnChannel.
+    double lastSnrDb{0.0};
+    bool snrKnown{false};
+
     /// EMA-tracked packet delivery ratio p_l (Eq. 1), updated from actual
     /// ARQ outcomes (ACK received vs. retry/give-up) -- see
     /// NeighborTable::UpdateDeliveryOutcome. This is what drives the

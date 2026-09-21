@@ -54,12 +54,27 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <string>
 #include <vector>
 
 using namespace ns3;
 using namespace ns3::leo;
 
 NS_LOG_COMPONENT_DEFINE("LeoTopologies");
+
+// Stable RNG stream namespaces. These identities are deliberately
+// independent of object-allocation order so paired runs across metrics
+// keep the same stochastic component identities.
+static constexpr int64_t kChannelRngStream = 10;
+static constexpr int64_t kMobilityRngStreamBase = 1000;
+static constexpr int64_t kMobilityRngStreamStride = 16;
+
+static int64_t
+MobilityRngStreamForNode(uint32_t nodeId)
+{
+    return kMobilityRngStreamBase +
+           static_cast<int64_t>(nodeId) * kMobilityRngStreamStride;
+}
 
 // ---------------------------------------------------------------------
 // Layouts of Fig. 4. Positions are illustrative and parameterized by a
@@ -260,7 +275,20 @@ main(int argc, char* argv[])
     // ramp-up/down) NOT specified numerically by the paper; declared
     // assumption, default 100 us.
     double radioOverheadS = 100.0e-6;
-    bool useNrf52840Energy = false; // opt-in: see nrf52840-current-table.h caveats
+    uint32_t macMaxRetries = 4;     // finite-ARQ operational substitute; source timing/cap not fully published
+    double ackTimeoutS = 0.05;      // reconstruction assumption
+    double discoveryTimeoutS = 1.0; // R1 liveness guard; reconstruction assumption
+    bool boundEq17ToRMax = true;    // v1.0.0 behavior; false = literal Eq.17 sensitivity
+    uint32_t relayCap = 3;          // source-unspecified discovery re-relay cap; R4 design factor
+    bool useNrf52840Energy = false; // accounting mode only; physical TX remains discrete in both modes
+
+    // R4 provenance identity. R5's manifest runner must populate these for
+    // production data; defaults remain useful for bounded manual smoke runs.
+    std::string experimentId = "UNSPECIFIED";
+    std::string scenarioSet = "UNSPECIFIED";
+    std::string scenarioId = "UNSPECIFIED";
+    std::string manifestSha256 = "UNSPECIFIED";
+    std::string routeCsv = "";
     // HFXO crystal choice for RadioParameters::hfxoStandbyCurrentMa (only
     // matters when useNrf52840Energy=true). "none" (default) reproduces
     // RADIO-only current (Section 6.20.15's own scope, excludes the
@@ -313,6 +341,7 @@ main(int argc, char* argv[])
     cmd.AddValue("nNodes", "number of nodes including the gateway", nNodes);
     cmd.AddValue("spacingM", "nominal inter-node spacing [m]", spacingM);
     cmd.AddValue("envFactor", "environmental factor N in Eq. (18)", envFactor);
+    cmd.AddValue("signalLossPerMDbm", "signal-loss constant in Eq. (18), dBm", signalLossPerMDbm);
     cmd.AddValue("backgroundNoiseDbm", "noise floor N in Eq. (5)/(9), dBm", backgroundNoiseDbm);
     cmd.AddValue("metric", "hopcount|lqi|lqi-literal|leo", metricStr);
     cmd.AddValue("runs", "number of independent repetitions", runs);
@@ -322,9 +351,31 @@ main(int argc, char* argv[])
     cmd.AddValue("pingPayloadBytes", "ping payload size in bytes (paper: 100)", pingPayloadBytes);
     cmd.AddValue("bitrateBps", "PHY bitrate used for airtime/energy accounting", bitrateBps);
     cmd.AddValue("radioOverheadS", "fixed per-frame MAC/PHY turnaround, s", radioOverheadS);
+    cmd.AddValue("macMaxRetries",
+                 "stop-and-wait ARQ retry cap (operational reconstruction; sensitivity parameter)",
+                 macMaxRetries);
+    cmd.AddValue("ackTimeoutS",
+                 "ACK wait timeout in seconds (unpublished reconstruction parameter)",
+                 ackTimeoutS);
+    cmd.AddValue("discoveryTimeoutS",
+                 "path-discovery liveness timeout in seconds (R1 reconstruction parameter)",
+                 discoveryTimeoutS);
+    cmd.AddValue("boundEq17ToRMax",
+                 "true = v1.0.0 bounded Eq.17 reconstruction; false = literal unbounded Eq.17",
+                 boundEq17ToRMax);
+    cmd.AddValue("relayCap",
+                 "per-node PATH_DISCOVERY re-relay cap; source-unspecified R4 design factor",
+                 relayCap);
+    cmd.AddValue("experimentId", "R4/R5 experiment identity written to every output row", experimentId);
+    cmd.AddValue("scenarioSet", "manifest scenario-set identity written to every output row", scenarioSet);
+    cmd.AddValue("scenarioId", "manifest scenario identity written to every output row", scenarioId);
+    cmd.AddValue("manifestSha256", "SHA256 of the frozen experiment manifest", manifestSha256);
+    cmd.AddValue("routeCsv",
+                 "optional per-PING route/status evidence CSV; required by R5 production manifest",
+                 routeCsv);
     cmd.AddValue("useNrf52840Energy",
-                 "use the datasheet-anchored discrete nRF52840 current table instead of the "
-                 "continuous dBm-to-mW model (see nrf52840-current-table.h caveats)",
+                 "energy accounting only: false=Eq.14-style proxy, true=nRF52840 RADIO-current model; "
+                 "physical TX levels are discrete in both modes",
                  useNrf52840Energy);
     cmd.AddValue("hfxoCrystal",
                  "none|epson_fa128|epson_fa20h|epson_tsx3225|ndk_nx1612aa|ndk_nx1210ab -- adds "
@@ -355,6 +406,81 @@ main(int argc, char* argv[])
                  discoveryWindowS);
     cmd.Parse(argc, argv);
 
+    // R3 fail-fast configuration validation. Reject invalid/unsafe inputs
+    // before opening output files, creating nodes, or scheduling events.
+    NS_ABORT_MSG_IF(nNodes < 2, "--nNodes must be >= 2, got " << nNodes);
+    NS_ABORT_MSG_IF(runs == 0, "--runs must be >= 1");
+    NS_ABORT_MSG_IF(!std::isfinite(spacingM) || spacingM <= 0.0,
+                    "--spacingM must be finite and > 0, got " << spacingM);
+    NS_ABORT_MSG_IF(!std::isfinite(envFactor) || envFactor <= 0.0,
+                    "--envFactor must be finite and > 0, got " << envFactor);
+    NS_ABORT_MSG_IF(!std::isfinite(signalLossPerMDbm) || signalLossPerMDbm > 0.0,
+                    "--signalLossPerMDbm must be finite and <= 0, got " << signalLossPerMDbm);
+    NS_ABORT_MSG_IF(!std::isfinite(backgroundNoiseDbm),
+                    "--backgroundNoiseDbm must be finite");
+    NS_ABORT_MSG_IF(!std::isfinite(interferenceDb) || interferenceDb < 0.0,
+                    "--interferenceDb must be finite and >= 0, got " << interferenceDb);
+    NS_ABORT_MSG_IF(!std::isfinite(bitrateBps) || bitrateBps <= 0.0,
+                    "--bitrateBps must be finite and > 0, got " << bitrateBps);
+    NS_ABORT_MSG_IF(!std::isfinite(radioOverheadS) || radioOverheadS < 0.0,
+                    "--radioOverheadS must be finite and >= 0, got " << radioOverheadS);
+    NS_ABORT_MSG_IF(macMaxRetries > kMaxRetransmissionField,
+                    "--macMaxRetries must be <= "
+                        << static_cast<uint32_t>(kMaxRetransmissionField)
+                        << " so it fits the protocol retransmission field");
+    NS_ABORT_MSG_IF(relayCap == 0 || relayCap > 255,
+                    "--relayCap must be in [1,255], got " << relayCap);
+    NS_ABORT_MSG_IF(!std::isfinite(ackTimeoutS) || ackTimeoutS <= 0.0,
+                    "--ackTimeoutS must be finite and > 0, got " << ackTimeoutS);
+    NS_ABORT_MSG_IF(!std::isfinite(discoveryTimeoutS) || discoveryTimeoutS <= 0.0,
+                    "--discoveryTimeoutS must be finite and > 0, got " << discoveryTimeoutS);
+    NS_ABORT_MSG_IF(!std::isfinite(mobilityBoxFrac) || mobilityBoxFrac < 0.0,
+                    "--mobilityBoxFrac must be finite and >= 0, got " << mobilityBoxFrac);
+    NS_ABORT_MSG_IF(!std::isfinite(mobilitySpeedMin) ||
+                        !std::isfinite(mobilitySpeedMax) ||
+                        mobilitySpeedMin < 0.0 ||
+                        mobilitySpeedMax < mobilitySpeedMin,
+                    "mobility speed range must be finite with 0 <= min <= max");
+    NS_ABORT_MSG_IF(!std::isfinite(mobilityPauseMin) ||
+                        !std::isfinite(mobilityPauseMax) ||
+                        mobilityPauseMin < 0.0 ||
+                        mobilityPauseMax < mobilityPauseMin,
+                    "mobility pause range must be finite with 0 <= min <= max");
+    NS_ABORT_MSG_IF(!std::isfinite(mobilityWarmupS) || mobilityWarmupS < 0.0,
+                    "--mobilityWarmupS must be finite and >= 0, got " << mobilityWarmupS);
+    NS_ABORT_MSG_IF(mobilityDiagnostics &&
+                        (!std::isfinite(mobilityDiagnosticsPeriodS) ||
+                         mobilityDiagnosticsPeriodS <= 0.0),
+                    "--mobilityDiagnosticsPeriodS must be finite and > 0 when diagnostics are enabled");
+    NS_ABORT_MSG_IF(!std::isfinite(emaAlpha) || emaAlpha < 0.0 || emaAlpha > 1.0,
+                    "--emaAlpha must be finite and in [0,1], got " << emaAlpha);
+    NS_ABORT_MSG_IF(!std::isfinite(discoveryWindowS) || discoveryWindowS < 0.0,
+                    "--discoveryWindowS must be finite and >= 0, got " << discoveryWindowS);
+    NS_ABORT_MSG_IF(outCsv.empty(), "--outCsv must not be empty");
+    auto validateCsvToken = [](const std::string& name, const std::string& value) {
+        NS_ABORT_MSG_IF(value.find(',') != std::string::npos ||
+                            value.find('\n') != std::string::npos ||
+                            value.find('\r') != std::string::npos,
+                        "--" << name << " must not contain comma/newline characters");
+    };
+    validateCsvToken("experimentId", experimentId);
+    validateCsvToken("scenarioSet", scenarioSet);
+    validateCsvToken("scenarioId", scenarioId);
+    validateCsvToken("manifestSha256", manifestSha256);
+    validateCsvToken("hfxoCrystal", hfxoCrystal);
+    validateCsvToken("mobility", mobility);
+    validateCsvToken("metric", metricStr);
+    validateCsvToken("layout", layout);
+
+    NS_ABORT_MSG_IF(!routeCsv.empty() && routeCsv == outCsv,
+                    "--routeCsv and --outCsv must be different files");
+    NS_ABORT_MSG_IF(mobilityDiagnostics && !routeCsv.empty() && routeCsv == mobilityDiagCsv,
+                    "--routeCsv and --mobilityDiagCsv must be different files");
+    NS_ABORT_MSG_IF(mobilityDiagnostics && mobilityDiagCsv.empty(),
+                    "--mobilityDiagCsv must not be empty when diagnostics are enabled");
+    NS_ABORT_MSG_IF(mobilityDiagnostics && outCsv == mobilityDiagCsv,
+                    "--outCsv and --mobilityDiagCsv must be different files");
+
     MetricType metricType = ParseMetric(metricStr);
 
     const std::vector<FrameType> kAllFrameTypes = {FrameType::NET_SCAN,
@@ -371,14 +497,44 @@ main(int argc, char* argv[])
         writeHeader = !existing.good() || existing.peek() == std::ifstream::traits_type::eof();
     }
     std::ofstream csv(outCsv, std::ios::app);
+    NS_ABORT_MSG_IF(!csv.is_open() || !csv.good(),
+                    "failed to open output CSV for append: " << outCsv);
     if (writeHeader)
     {
-        csv << "layout,envFactor,metric,interference,run,totalEnergyMWs,pingTimeouts,pingNoRoute,pingSent";
+        csv << "experimentId,scenarioSet,scenarioId,manifestSha256,"
+               "layout,envFactor,metric,interference,relayCap,run,seedBase,ns3Run,"
+               "nNodes,spacingM,signalLossPerMDbm,backgroundNoiseDbm,interferenceDb,"
+               "mobility,mobilityBoxFrac,mobilitySpeedMin,mobilitySpeedMax,"
+               "mobilityPauseMin,mobilityPauseMax,mobilityWarmupS,"
+               "emaAlpha,discoveryWindowS,discoveryTimeoutS,macMaxRetries,ackTimeoutS,"
+               "bitrateBps,radioOverheadS,useNrf52840Energy,hfxoCrystal,"
+               "boundEq17ToRMax,pingPayloadBytes,atpcMode,"
+               "totalEnergyMWs,pingTimeouts,pingNoRoute,pingSent";
         for (FrameType t : kAllFrameTypes)
         {
             csv << ",energy_" << FrameTypeName(t);
         }
         csv << "\n";
+    }
+
+    std::ofstream routeOut;
+    if (!routeCsv.empty())
+    {
+        bool writeRouteHeader = true;
+        {
+            std::ifstream existingRoute(routeCsv);
+            writeRouteHeader =
+                !existingRoute.good() || existingRoute.peek() == std::ifstream::traits_type::eof();
+        }
+        routeOut.open(routeCsv, std::ios::app);
+        NS_ABORT_MSG_IF(!routeOut.is_open() || !routeOut.good(),
+                        "failed to open route evidence CSV for append: " << routeCsv);
+        if (writeRouteHeader)
+        {
+            routeOut << "experimentId,scenarioSet,scenarioId,manifestSha256,"
+                        "layout,envFactor,metric,interference,relayCap,run,seedBase,ns3Run,"
+                        "targetId,seq,status,routeFingerprint,routeHopCount\n";
+        }
     }
 
     std::ofstream diagCsv;
@@ -390,6 +546,8 @@ main(int argc, char* argv[])
             writeDiagHeader = !existingDiag.good() || existingDiag.peek() == std::ifstream::traits_type::eof();
         }
         diagCsv.open(mobilityDiagCsv, std::ios::app);
+        NS_ABORT_MSG_IF(!diagCsv.is_open() || !diagCsv.good(),
+                        "failed to open mobility diagnostics CSV for append: " << mobilityDiagCsv);
         if (writeDiagHeader)
         {
             diagCsv << "layout,envFactor,metric,mobility,run,simTimeS,avgNodeDegree\n";
@@ -400,6 +558,7 @@ main(int argc, char* argv[])
     {
         RngSeedManager::SetSeed(seedBase);
         RngSeedManager::SetRun(run + 1);
+        RngSeedManager::ResetNextStreamIndex();
 
         NodeContainer nodes;
         nodes.Create(nNodes);
@@ -433,6 +592,9 @@ main(int argc, char* argv[])
                 speedStream << "ns3::UniformRandomVariable[Min=" << mobilitySpeedMin << "|Max=" << mobilitySpeedMax
                             << "]";
                 mm->SetAttribute("Speed", StringValue(speedStream.str()));
+                const int64_t consumed = mm->AssignStreams(MobilityRngStreamForNode(i));
+                NS_ABORT_MSG_IF(consumed > kMobilityRngStreamStride,
+                                "RandomWalk2dMobilityModel exceeded reserved RNG stream block");
                 nodes.Get(i)->AggregateObject(mm);
                 mm->SetPosition(positions[i]);
             }
@@ -473,6 +635,9 @@ main(int argc, char* argv[])
                 alloc->SetAttribute("X", StringValue(xStream.str()));
                 alloc->SetAttribute("Y", StringValue(yStream.str()));
                 mm->SetAttribute("PositionAllocator", PointerValue(alloc));
+                const int64_t consumed = mm->AssignStreams(MobilityRngStreamForNode(i));
+                NS_ABORT_MSG_IF(consumed > kMobilityRngStreamStride,
+                                "RandomWaypointMobilityModel exceeded reserved RNG stream block");
                 nodes.Get(i)->AggregateObject(mm);
                 mm->SetPosition(positions[i]); // initial position: the node's Fig.4 layout coordinate
             }
@@ -483,11 +648,14 @@ main(int argc, char* argv[])
         }
 
         Ptr<WsnChannel> channel = CreateObject<WsnChannel>();
+        NS_ABORT_MSG_IF(channel->AssignStreams(kChannelRngStream) != 1,
+                        "WsnChannel RNG stream assignment consumed an unexpected stream count");
         channel->SetEnvironmentFactor(envFactor);
         channel->SetSignalLossPerMeterDbm(signalLossPerMDbm);
 
         RadioParameters radio; // nRF52840 defaults from Section 3 / 3.1
         radio.backgroundNoiseDbm = backgroundNoiseDbm;
+        radio.boundEq17ToRMax = boundEq17ToRMax;
         radio.useNrf52840Energy = useNrf52840Energy;
         if (hfxoCrystal == "epson_fa128")
         {
@@ -566,6 +734,12 @@ main(int argc, char* argv[])
             app->SetPingPayloadBytes(pingPayloadBytes);
             app->SetEmaAlpha(emaAlpha);
             app->SetDiscoveryWindowS(discoveryWindowS);
+            app->SetDiscoveryTimeoutS(discoveryTimeoutS);
+            app->SetMaxRelaysPerFlood(static_cast<uint8_t>(relayCap));
+            app->SetTiming(1.0e-3,
+                           1.0e-3,
+                           static_cast<uint8_t>(macMaxRetries));
+            app->SetAckTimeoutS(ackTimeoutS);
             app->SetPhyTiming(bitrateBps, radioOverheadS);
             nodes.Get(i)->AddApplication(app);
             app->SetStartTime(Seconds(0.0));
@@ -672,8 +846,17 @@ main(int argc, char* argv[])
         uint32_t noRoute = apps[0]->GetStats().pingNoRoute;
         uint32_t sent = apps[0]->GetStats().pingSent;
 
-        csv << layout << "," << envFactor << "," << metricStr << "," << (interference ? 1 : 0) << "," << run
-            << "," << totalEnergy << "," << timeouts << "," << noRoute << "," << sent;
+        csv << experimentId << "," << scenarioSet << "," << scenarioId << "," << manifestSha256 << ","
+            << layout << "," << envFactor << "," << metricStr << "," << (interference ? 1 : 0) << ","
+            << relayCap << "," << run << "," << seedBase << "," << (run + 1) << ","
+            << nNodes << "," << spacingM << "," << signalLossPerMDbm << "," << backgroundNoiseDbm << ","
+            << interferenceDb << "," << mobility << "," << mobilityBoxFrac << "," << mobilitySpeedMin << ","
+            << mobilitySpeedMax << "," << mobilityPauseMin << "," << mobilityPauseMax << ","
+            << mobilityWarmupS << "," << emaAlpha << "," << discoveryWindowS << "," << discoveryTimeoutS << ","
+            << macMaxRetries << "," << ackTimeoutS << "," << bitrateBps << "," << radioOverheadS << ","
+            << (useNrf52840Energy ? 1 : 0) << "," << hfxoCrystal << "," << (boundEq17ToRMax ? 1 : 0) << ","
+            << pingPayloadBytes << ",with-feedback,"
+            << totalEnergy << "," << timeouts << "," << noRoute << "," << sent;
         for (FrameType t : kAllFrameTypes)
         {
             auto it = energyByType.find(t);
@@ -681,9 +864,29 @@ main(int argc, char* argv[])
         }
         csv << "\n";
 
+        if (routeOut.is_open())
+        {
+            const NodeStats& gatewayStats = apps[0]->GetStats();
+            for (const auto& kv : gatewayStats.pingTrace)
+            {
+                const uint32_t targetId = kv.first.first;
+                const uint32_t seq = kv.first.second;
+                const PingTraceObservation& obs = kv.second;
+                routeOut << experimentId << "," << scenarioSet << "," << scenarioId << ","
+                         << manifestSha256 << "," << layout << "," << envFactor << "," << metricStr << ","
+                         << (interference ? 1 : 0) << "," << relayCap << "," << run << "," << seedBase << ","
+                         << (run + 1) << "," << targetId << "," << seq << "," << obs.status << ","
+                         << obs.routeFingerprint << "," << obs.routeHopCount << "\n";
+            }
+        }
+
         Simulator::Destroy();
     }
 
     csv.close();
+    if (routeOut.is_open())
+    {
+        routeOut.close();
+    }
     return 0;
 }

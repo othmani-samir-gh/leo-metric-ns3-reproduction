@@ -1,0 +1,20 @@
+{
+  "status": "LOCAL_RELEASE_GATE_PASS_REMOTE_PUBLISH_BLOCKED_BY_PERMISSION",
+  "authors_confirmed": true,
+  "author_confirmation_commit": "6f4185297e8f2c609a0a19630566d75588ca076e",
+  "citation_sha256": "cc97532909669e321e31c1b7f946d52b8a0ca94a8e5d7890333847b45650bb45",
+  "dataset_asset": {
+    "path_local": "/home/pharmaco/projects/LEO_v1.1.0_Release_Assets/leo-v1.1.0-results.tar.gz",
+    "size_bytes": 13829224,
+    "sha256": "e32b25adcca49abcbe732ba75d80390d07542128395fca5332af3235cded3783"
+  },
+  "github_repository": "othmani-samir-gh/leo-metric-ns3-reproduction",
+  "github_permissions_observed": {
+    "pull": true,
+    "push": false
+  },
+  "scientific_requalification_complete": true,
+  "r8_status": "PASS_WITH_RELEASE_HUMAN_GATE_CLOSED",
+  "author_gate_resolved": true,
+  "public_release_state": "BLOCKED_REMOTE_PERMISSION"
+}

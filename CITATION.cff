@@ -25,16 +25,17 @@ authors:
 repository-code: 'https://github.com/othmani-samir-gh/leo-metric-ns3-reproduction'
 abstract: >-
   An independent ns-3 reconstruction of the Low Energy and Overhead (LEO)
-  wireless-sensor-network routing metric, together with hop-count and two
-  ZigBee LQI baselines, an equation-level verification oracle, route
-  discrimination screening, statistical significance testing, and a
-  static-versus-mobile evaluation across six topology layouts. The
-  repository documents every modeling assumption and every deviation from
-  the source publication, including two findings that materially affect
-  interpretation: the published nRF52840 LQI cost formulation degenerates
-  to hop-count at realistic node spacing, and the sign of the LEO energy
-  comparison inverts across the range of a per-flood re-relay bound that
-  the source publication does not specify.
+  wireless-sensor-network routing metric, with hop-count and ZigBee LQI
+  comparators. Version 1.1.0 requalifies the simulator through regression
+  testing, deterministic RNG streams, frozen experiment provenance, complete
+  raw-data regeneration, paired statistical reanalysis, and checksum-bound
+  figures and claims. In the source-constrained static non-interference
+  analysis, LEO reduces timeout and no-route outcomes versus hop-count, while
+  its energy effect depends on the relay cap; LEO uses more energy than the
+  operational LQI comparator in the tested primary strata. Mobility and
+  reconstruction-parameter studies are reported separately as exploratory
+  or sensitivity analyses. The repository does not claim exact replay of the
+  original authors' unpublished simulator code.
 keywords:
   - wireless sensor networks
   - routing metrics
@@ -44,7 +45,7 @@ keywords:
   - simulation validation
   - node mobility
 license: MIT
-version: 1.0.0
+version: 1.1.0
 date-released: '2026-09-20'
 
 references:

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="460" viewBox="0 0 760 460">
+<rect x="0" y="0" width="100%" height="100%" fill="white"/>
+<text x="380.0" y="28" text-anchor="middle" font-family="sans-serif" font-size="18" font-weight="bold">Interference energy effects</text>
+<text x="380.0" y="49" text-anchor="middle" font-family="sans-serif" font-size="11">Limited evidence: 5 cells/stratum; exact two-sided sign-flip minimum p=0.0625</text>
+<line x1="100" y1="65" x2="100" y2="375" stroke="black"/>
+<line x1="100" y1="375" x2="720" y2="375" stroke="black"/>
+<line x1="95" y1="375.00" x2="720" y2="375.00" stroke="black" stroke-opacity="0.15"/>
+<text x="91" y="379.00" text-anchor="end" font-family="sans-serif" font-size="10">-9.1</text>
+<line x1="95" y1="313.00" x2="720" y2="313.00" stroke="black" stroke-opacity="0.15"/>
+<text x="91" y="317.00" text-anchor="end" font-family="sans-serif" font-size="10">-1.5</text>
+<line x1="95" y1="251.00" x2="720" y2="251.00" stroke="black" stroke-opacity="0.15"/>
+<text x="91" y="255.00" text-anchor="end" font-family="sans-serif" font-size="10">6.1</text>
+<line x1="95" y1="189.00" x2="720" y2="189.00" stroke="black" stroke-opacity="0.15"/>
+<text x="91" y="193.00" text-anchor="end" font-family="sans-serif" font-size="10">13.8</text>
+<line x1="95" y1="127.00" x2="720" y2="127.00" stroke="black" stroke-opacity="0.15"/>
+<text x="91" y="131.00" text-anchor="end" font-family="sans-serif" font-size="10">21.4</text>
+<line x1="95" y1="65.00" x2="720" y2="65.00" stroke="black" stroke-opacity="0.15"/>
+<text x="91" y="69.00" text-anchor="end" font-family="sans-serif" font-size="10">29.0</text>
+<line x1="100" y1="300.87" x2="720" y2="300.87" stroke="black" stroke-width="1.4"/>
+<text x="151.67" y="398" text-anchor="middle" font-family="sans-serif" font-size="11">Hop-cap1</text>
+<text x="255.00" y="398" text-anchor="middle" font-family="sans-serif" font-size="11">Hop-cap2</text>
+<text x="358.33" y="398" text-anchor="middle" font-family="sans-serif" font-size="11">Hop-cap3</text>
+<text x="461.67" y="398" text-anchor="middle" font-family="sans-serif" font-size="11">LQI-cap1</text>
+<text x="565.00" y="398" text-anchor="middle" font-family="sans-serif" font-size="11">LQI-cap2</text>
+<text x="668.33" y="398" text-anchor="middle" font-family="sans-serif" font-size="11">LQI-cap3</text>
+<text x="24" y="220.0" transform="rotate(-90 24 220.0)" text-anchor="middle" font-family="sans-serif" font-size="12">LEO minus comparator (%)</text>
+<rect x="128.67" y="300.87" width="46.00" height="21.65" fill="white" stroke="black" stroke-width="1.5"/>
+<line x1="151.67" y1="345.00" x2="151.67" y2="304.86" stroke="black"/>
+<line x1="147.67" y1="345.00" x2="155.67" y2="345.00" stroke="black"/>
+<line x1="147.67" y1="304.86" x2="155.67" y2="304.86" stroke="black"/>
+<text x="151.67" y="337.52" text-anchor="middle" font-family="sans-serif" font-size="9">-2.7%</text>
+<rect x="232.00" y="260.21" width="46.00" height="40.66" fill="white" stroke="black" stroke-width="1.5"/>
+<line x1="255.00" y1="286.26" x2="255.00" y2="231.96" stroke="black"/>
+<line x1="251.00" y1="286.26" x2="259.00" y2="286.26" stroke="black"/>
+<line x1="251.00" y1="231.96" x2="259.00" y2="231.96" stroke="black"/>
+<text x="255.00" y="253.21" text-anchor="middle" font-family="sans-serif" font-size="9">+5.0%</text>
+<rect x="335.33" y="243.73" width="46.00" height="57.14" fill="white" stroke="black" stroke-width="1.5"/>
+<line x1="358.33" y1="277.27" x2="358.33" y2="207.80" stroke="black"/>
+<line x1="354.33" y1="277.27" x2="362.33" y2="277.27" stroke="black"/>
+<line x1="354.33" y1="207.80" x2="362.33" y2="207.80" stroke="black"/>
+<text x="358.33" y="236.73" text-anchor="middle" font-family="sans-serif" font-size="9">+7.0%</text>
+<rect x="438.67" y="246.92" width="46.00" height="53.95" fill="white" stroke="black" stroke-width="1.5"/>
+<line x1="461.67" y1="280.62" x2="461.67" y2="214.83" stroke="black"/>
+<line x1="457.67" y1="280.62" x2="465.67" y2="280.62" stroke="black"/>
+<line x1="457.67" y1="214.83" x2="465.67" y2="214.83" stroke="black"/>
+<text x="461.67" y="239.92" text-anchor="middle" font-family="sans-serif" font-size="9">+6.6%</text>
+<rect x="542.00" y="178.66" width="46.00" height="122.21" fill="white" stroke="black" stroke-width="1.5"/>
+<line x1="565.00" y1="241.15" x2="565.00" y2="122.63" stroke="black"/>
+<line x1="561.00" y1="241.15" x2="569.00" y2="241.15" stroke="black"/>
+<line x1="561.00" y1="122.63" x2="569.00" y2="122.63" stroke="black"/>
+<text x="565.00" y="171.66" text-anchor="middle" font-family="sans-serif" font-size="9">+15.0%</text>
+<rect x="645.33" y="160.59" width="46.00" height="140.27" fill="white" stroke="black" stroke-width="1.5"/>
+<line x1="668.33" y1="234.26" x2="668.33" y2="95.00" stroke="black"/>
+<line x1="664.33" y1="234.26" x2="672.33" y2="234.26" stroke="black"/>
+<line x1="664.33" y1="95.00" x2="672.33" y2="95.00" stroke="black"/>
+<text x="668.33" y="153.59" text-anchor="middle" font-family="sans-serif" font-size="9">+17.3%</text>
+</svg>

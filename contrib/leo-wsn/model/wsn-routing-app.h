@@ -47,6 +47,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ns3
@@ -132,7 +133,25 @@ class WsnHeader : public Header
     /// figures severalfold in well-connected topologies where many nodes
     /// overhear the same small, frequently-sent ACK frames.
     uint32_t intendedNextHopId{0};
+
+    /// R4 direct route evidence for PING/PING_REPLY transactions.
+    /// This 64-bit FNV-1a fingerprint is updated by the ACTUAL nodes
+    /// traversed by the forward PING and copied unchanged into the reply.
+    /// It is diagnostic evidence, not part of route selection.
+    uint64_t routeFingerprint{0};
+    uint32_t routeHopCount{0};
 };
+
+/// Stable 64-bit fingerprint helper used only for direct route evidence.
+uint64_t MixRouteFingerprint(uint64_t hash, uint32_t nodeId);
+
+struct PingTraceObservation
+{
+    std::string status; // pending|success|timeout|no_route
+    uint64_t routeFingerprint{0};
+    uint32_t routeHopCount{0};
+};
+
 
 struct RouteEntry
 {
@@ -160,6 +179,9 @@ struct NodeStats
     uint32_t pingNoRoute{0};
     // Energy broken down by frame type, mirroring Fig. 8/9's stacked bars.
     std::map<FrameType, double> energyByType;
+
+    /// Per-attempt direct route/status evidence keyed by (targetId, seq).
+    std::map<std::pair<uint32_t, uint32_t>, PingTraceObservation> pingTrace;
 };
 
 class WsnRoutingApp : public Application
@@ -193,6 +215,11 @@ class WsnRoutingApp : public Application
     /// Reset MAC-attempt cap and per-attempt slot durations (documented assumptions).
     void SetTiming(double txSlotDurationS, double rxSlotDurationS, uint8_t macMaxRetries);
 
+    /// ACK wait timeout used by the stop-and-wait ARQ reconstruction.
+    /// This timing is not published by the source paper and must be
+    /// recorded/swept as an experiment parameter.
+    void SetAckTimeoutS(double seconds);
+
     /// Sets the bitrate used to convert frame size into airtime for energy
     /// accounting (Section 3: "Two transmission rates are supported:
     /// 1 Mbit/s and 2 Mbit/s"), and a fixed radio/MAC turnaround overhead
@@ -212,6 +239,16 @@ class WsnRoutingApp : public Application
     void SetEmaAlpha(double alpha);
     void SetDiscoveryWindowS(double seconds);
 
+    /// Liveness timeout for an outstanding path-discovery transaction.
+    /// The source paper does not publish this value; it is a reconstruction
+    /// safety parameter and must be frozen/swept in the experiment manifest.
+    void SetDiscoveryTimeoutS(double seconds);
+
+    /// Runtime cap on how many times one node may relay the same discovery
+    /// flood. The source paper does not publish this bound, so R4 records
+    /// it as an explicit experiment factor instead of requiring source edits.
+    void SetMaxRelaysPerFlood(uint8_t cap);
+
     /// Connection-phase entry point (Section 4: "each node ... performed
     /// path discovery one time" during the connection phase, itself
     /// preceded by scanning/joining). Broadcasts one NET_SCAN then one
@@ -226,9 +263,13 @@ class WsnRoutingApp : public Application
   protected:
     void StartApplication() override;
     void StopApplication() override;
+    void DoDispose() override;
 
   private:
+    friend class WsnRoutingAppTestPeer; // regression-test access only; no runtime behavior
+
     void OnReceive(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag tag);
+    void OnReceiveFailed(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag tag);
 
     /// Single-shot, unacknowledged broadcast (used for PATH_DISCOVERY,
     /// matching the paper: flooding needs no per-hop ACK, redundancy
@@ -275,17 +316,19 @@ class WsnRoutingApp : public Application
     /// sends the reply via whichever candidate route had the best
     /// (lowest) accumulated metric. See kDiscoveryWindowS.
     void ReplyBestCandidate(uint32_t originatorId, uint32_t floodId);
+    void OnDiscoveryTimeout(uint32_t targetId, uint32_t floodId);
     void HandlePing(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& tag);
     void HandlePingReply(WsnHeader hdr, uint32_t fromId, const WsnLinkInfoTag& tag);
 
     void SendNextPing();
     void OnPingTimeout(uint32_t targetId, uint32_t seq);
 
-    double LinkMetricTo(uint32_t neighborId) const;
+    LinkMetricResult LinkMetricTo(uint32_t neighborId) const;
     /// \param frameBytes serialized size of the frame (header + payload),
     /// used to compute airtime when SetPhyTiming has been called; ignored
     /// (falls back to the fixed slot-duration constants) otherwise.
     void ChargeEnergy(FrameType type, double txPowerDbm, bool isTx, uint32_t frameBytes = 0);
+    void ChargeRxListeningEnergy(FrameType type, double durationS);
 
     /// Hard cap on hop count for both PATH_DISCOVERY flood relay and
     /// PATH_DISCOVERY_REPLY forwarding. This is a standard TTL-style
@@ -297,11 +340,9 @@ class WsnRoutingApp : public Application
     /// the simulation. Real deployments need an equivalent bound too.
     static constexpr uint32_t kMaxHopCount = 64;
 
-    /// Cap on how many times a single node may re-relay the *same* flood
-    /// (originatorId, floodId) even if later copies keep improving the
-    /// LEO metric, bounding the number of rebroadcast events in a densely
-    /// connected topology.
-    static constexpr uint8_t kMaxRelaysPerFlood = 3;
+    /// Runtime cap on how many times a single node may re-relay the same
+    /// (originatorId,floodId). R4 treats this as an explicit design factor.
+    uint8_t m_maxRelaysPerFlood{3};
     std::map<uint32_t, std::map<uint32_t, uint8_t>> m_floodRelayCount; //!< originatorId -> floodId -> count
 
     /// Destination-side candidate collection: rather than replying to
@@ -340,6 +381,8 @@ class WsnRoutingApp : public Application
 
     uint32_t m_nextFloodId{1};
     std::map<uint32_t, uint32_t> m_pendingDiscoveryFloodId; // targetId -> floodId in flight
+    std::map<uint32_t, EventId> m_discoveryTimeoutEvents;    // targetId -> timeout for current flood
+    double m_discoveryTimeoutS{1.0}; //!< reconstruction liveness guard; source value unpublished
 
     std::vector<uint32_t> m_pingTargets;
     std::size_t m_pingTargetIdx{0};
@@ -347,7 +390,7 @@ class WsnRoutingApp : public Application
     static constexpr uint32_t kPingsPerNode = 10;
     uint32_t m_pingsSentToCurrentTarget{0};
     EventId m_pingTimer;
-    EventId m_timeoutEvent;
+    std::map<std::pair<uint32_t, uint32_t>, EventId> m_pingTimeoutEvents; // (targetId, seq) -> timeout
 
     NodeStats m_stats;
 
@@ -376,6 +419,7 @@ class WsnRoutingApp : public Application
     // discovery-storm overhead (see README's "Assumptions and
     // limitations" -- item 4b).
     static void NoteFrameSent();
+    static void ResetGlobalFrameCounter();
 
     double m_txSlotDurationS{1.0e-3};
     double m_rxSlotDurationS{1.0e-3};

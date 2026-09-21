@@ -1,0 +1,23 @@
+{
+  "program": "LEO v1.1.0 — Repair & Requalification",
+  "gate": "R6 — Statistical Reanalysis",
+  "status": "PASS",
+  "closed": true,
+  "r5_closeout_commit": "6f1220b0f9f496f34e79bf26a3a624350b350532",
+  "r6_sap_commit": "d90a925cddc4318a9857bf7c42182fa989df886b",
+  "r6_analysis_commit": "77f5c9973277fa9c0e8b214a28103ec4dcb084c8",
+  "r6_sap_sha256": "dfe5ed8d6a84190d8ca34d5a2f8f26b59087cd964795b0099b30e0dce119d588",
+  "analysis_script_sha256": "400379c42aa17e673a7f038b9d5400ca0d63c41c5f7ea5bc060c6f26a051dc0d",
+  "r6_qc_sha256": "b62b240586ed69a71f7eae14847e0c3b1d9f43cc746dfdab4ea97a6db6f4f1ad",
+  "r6_checksums_sha256": "615d09f92b20de55286d6995b10e62e1a3d4eccfd512f1b8cef1a92f94a5f5c1",
+  "deterministic_rerun": true,
+  "analysis_output_count_before_qc": 13,
+  "qc_checksum_entries": 14,
+  "primary_summary_rows": 36,
+  "primary_cell_effect_rows": 630,
+  "primary_route_summary_rows": 12,
+  "holm_significant_primary_strata": 11,
+  "report_sha256": "65ef197ce13558cd311c0cd9163c94c9fbbc2606bef0dd8d5cd9d02cea60570c",
+  "next_gate": "R7 — Figures / Claims / Release-Candidate Requalification",
+  "r7_open": true
+}

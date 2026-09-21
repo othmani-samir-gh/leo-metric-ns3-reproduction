@@ -1,0 +1,17 @@
+{
+  "caption_coverage": 8,
+  "captions_sha256": "e5b0a0ec0fee048d7cac7b3c22aaee716c92595ee3927bc7a0aa07a9053153f2",
+  "claims_count": 15,
+  "claims_matrix_sha256": "6cc665e5fbb1b53a83f723354e9441054a6d481577991ef70b1e3339c466875a",
+  "data_dictionary_legacy_scope": "PASS",
+  "deterministic_figure_rebuild_byte_identical": true,
+  "figure_provenance_entries": 8,
+  "figure_provenance_sha256": "a8623a4a2b5765c53f4b8400e53eacee5a0e5799c37474a30f4e53a27dcc001b",
+  "legacy_scripts_marked_superseded": true,
+  "r6_checksums_sha256": "615d09f92b20de55286d6995b10e62e1a3d4eccfd512f1b8cef1a92f94a5f5c1",
+  "r6_qc_sha256": "b62b240586ed69a71f7eae14847e0c3b1d9f43cc746dfdab4ea97a6db6f4f1ad",
+  "r7_generator_sha256": "604427091a5a3aa87cbbdaa492919dd6016d1d665cef406cae3803dc87a21668",
+  "readme_stale_claim_scan": "PASS",
+  "status": "PASS",
+  "svg_count": 8
+}

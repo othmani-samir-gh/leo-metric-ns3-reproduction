@@ -1,4 +1,5 @@
 #include "route-metrics.h"
+#include "nrf52840-current-table.h"
 #include "wsn-channel.h" // for PrrFromSnrDb, used as an SNR-informed prior for p_l
 
 #include <algorithm>
@@ -89,20 +90,15 @@ ZigbeeLqiMetric::ComputeLinkMetric(const NeighborEntry& entryForPeer, const Radi
         // Best available estimate: EMA of actually-observed ARQ outcomes.
         pl = entryForPeer.deliveryRatioEma;
     }
-    else if (entryForPeer.rssiKnown)
+    else if (entryForPeer.snrKnown || entryForPeer.rssiKnown)
     {
-        // No ACK history yet (e.g. this is the very first flood a node
-        // has ever seen from this neighbor -- true for the whole
-        // "connection phase" of Section 4, since it runs path discovery
-        // exactly once per node). Rather than falling back to one flat
-        // constant for every link (which would make Eq. (1) numerically
-        // degenerate to Hop-count for that entire phase -- the second
-        // modeling pitfall found while validating this module), estimate
-        // p_l from the SNR actually measured on this reception, using the
-        // same empirical PRR(SNR) relationship the channel itself uses to
-        // decide delivery (Fig. 2). This keeps Eq. (1) meaningfully
-        // link-quality-sensitive from the very first packet.
-        double snrDb = entryForPeer.lastRssiDbm - radio.backgroundNoiseDbm;
+        // No ACK history yet. Prefer the exact effective SNR delivered by
+        // WsnChannel because it includes any configured interference
+        // penalty. Retain RSSI-noise reconstruction only as a compatibility
+        // fallback for a NeighborEntry created without channel metadata.
+        double snrDb = entryForPeer.snrKnown
+                           ? entryForPeer.lastSnrDb
+                           : entryForPeer.lastRssiDbm - radio.backgroundNoiseDbm;
         pl = PrrFromSnrDb(snrDb);
     }
     double cost = LinkCostFromDeliveryProbability(pl);
@@ -137,10 +133,17 @@ LeoMetric::RetransmissionsFromPowerDeficiency(double pTxRequiredDbm,
     double span = radio.retransmissionDeficiencySpanDb; // "15" in the paper
     double base = (10.0 / 9.0) * radio.rMax;
     double rD = std::pow(10.0, deficiencyDb / span) * base - base;
-    // Clamp to the physically sensible range [0, R_max]; a link that is
-    // already strong enough (deficiency <= 0) contributes no extra
-    // retransmissions from this term.
-    return std::clamp(rD, 0.0, static_cast<double>(radio.rMax));
+
+    if (radio.boundEq17ToRMax)
+    {
+        // Explicit v1.0.0 reconstruction policy: bound the operational
+        // retransmission-deficiency term to the representable retry range.
+        return std::clamp(rD, 0.0, static_cast<double>(radio.rMax));
+    }
+
+    // Literal transcription of Eq. (17), intentionally not clamped.
+    // R4 must record which policy is used for each experiment set.
+    return rD;
 }
 
 double
@@ -203,11 +206,14 @@ LeoMetric::LinkPowerMw(double rAvgRetransmissions, double pTxDbm, const RadioPar
 LinkMetricResult
 LeoMetric::ComputeLinkMetric(const NeighborEntry& entryForPeer, const RadioParameters& radio) const
 {
-    // ReqTXP is clamped to radio.pTxMaxDbm per the paper: "When the ReqTXP
-    // is greater than P_TX,max [dBm], the P_TX,max [dBm] value is used."
-    double pTxDbm = entryForPeer.reqTxPowerKnown
-                        ? std::min(entryForPeer.reqTxPowerDbm, radio.pTxMaxDbm)
-                        : radio.pTxMaxDbm;
+    // ReqTXP is first bounded to the modeled radio range, then realized
+    // on the nRF52840's discrete TXPOWER levels.  This same physical P_TX
+    // is used by WsnRoutingApp for the actual channel transmission.
+    double requestedTxPowerDbm =
+        entryForPeer.reqTxPowerKnown
+            ? std::clamp(entryForPeer.reqTxPowerDbm, radio.pTxMinDbm, radio.pTxMaxDbm)
+            : radio.pTxMaxDbm;
+    double pTxDbm = RealizeNrf52840TxPowerDbm(requestedTxPowerDbm);
 
     // One-way link rejection, Eq. (12)-(13). If we lack the data needed to
     // evaluate the condition, we conservatively treat the link as usable

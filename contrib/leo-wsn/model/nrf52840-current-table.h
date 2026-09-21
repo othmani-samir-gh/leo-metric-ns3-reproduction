@@ -218,12 +218,27 @@ SnapToNearestAvailableTxPowerDbm(double desiredDbm)
     return table.back().dbm; // desired exceeds max available; clamp to max
 }
 
+/**
+ * \brief Authoritative physical TX power realized by the modeled
+ * nRF52840 radio.
+ *
+ * This is intentionally independent of energy-accounting mode.  A radio
+ * cannot transmit an arbitrary continuous dBm value merely because the
+ * caller selected a simplified energy model.  All physical/channel and
+ * metric-side uses of P_TX should pass through this helper.
+ */
+inline double
+RealizeNrf52840TxPowerDbm(double desiredDbm)
+{
+    return SnapToNearestAvailableTxPowerDbm(desiredDbm);
+}
+
 /// Current draw (mA) at a given (already-snapped) discrete TX power. If
 /// \p dbm does not exactly match a table entry, snaps first.
 inline double
 Nrf52840TxCurrentMa(double dbm)
 {
-    double snapped = SnapToNearestAvailableTxPowerDbm(dbm);
+    double snapped = RealizeNrf52840TxPowerDbm(dbm);
     const auto& table = Nrf52840TxCurrentTable();
     for (const auto& pt : table)
     {

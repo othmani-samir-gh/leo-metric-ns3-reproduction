@@ -18,41 +18,73 @@ baselines, released as the artefact accompanying a reproduction study.
 > This is an independent reimplementation. It is not authored by, endorsed
 > by, or derived from the original authors' code, which is unpublished.
 
+## v1.1.0 requalification status
+
+The original v1.0.0 dataset, discrimination filter, Welch-test workflow, and
+figures are retained only as historical artifacts. They are **not** the
+authoritative basis for current claims.
+
+The governed v1.1.0 chain completed R1–R6 with repaired routing/runtime
+semantics, a frozen R4 experiment plan, full R5 regeneration, and a
+pre-specified R6 reanalysis:
+
+```text
+R5 configurations       = 617 / 617 PASS
+R5 main rows            = 12,340
+R5 route-evidence rows  = 2,344,600
+R5 pending routes       = 0
+R6 deterministic rerun  = PASS
+R6 QC                    = PASS
+```
+
+Primary confirmatory inference is restricted to the source-constrained static
+set. Mobility, nRF-energy accounting, Eq.17 policy, interference-strength, and
+other reconstruction-constant sweeps are reported separately as sensitivity
+or exploratory analyses.
+
+The regenerated v1.1.0 data are not committed as generated Git content. A
+checksum-bound dataset archive is prepared as `leo-v1.1.0-results.tar.gz`;
+its SHA256 and verification instructions are recorded in `RELEASE_ASSETS.md`
+and `RELEASE_ASSET_MANIFEST.json`.
+
 ## What this repository contains
 
 | Path | Contents |
 |---|---|
 | `contrib/leo-wsn/` | The ns-3 contrib module: metrics, ATPC, channel, routing application |
 | `scratch/` | Scenario driver and the equation cross-check program |
-| `results/raw/` | 19,600 simulation runs across 7 experiment configurations |
-| `results/derived/` | Route-discrimination screening and significance tests |
+| `results/raw/` | **Legacy v1.0.0** raw files (18,900 actual rows); historical only |
+| `results/derived/` | **Legacy v1.0.0** screening/significance outputs; superseded by R6 |
+| `results/v1.1.0/` | Frozen v1.1.0 R5 dataset after extracting the separate `leo-v1.1.0-results.tar.gz` release asset; see `RELEASE_ASSETS.md` |
 | `data/fig2-digitized/` | Digitized PRR/SNR curve from the source paper's Fig. 2 |
-| `figures/` | Publication figures, regenerable via `make_figs.py` |
-| `DATA_DICTIONARY.md` | Every file, every column, every unit |
+| `figures/` | Legacy v1.0.0 figures plus the governed `figures/v1.1.0/` release-candidate figures |
+| `analysis/` | v1.1.0 R6 statistical reanalysis and R7 figure generation |
+| `DATA_DICTIONARY.md` | Historical file/column documentation; v1.1.0 provenance is under `results/v1.1.0/` |
 
 ## Two findings that affect how this metric should be evaluated
 
 **1. The device-specific LQI baseline degenerates.** The nRF52840 link cost
 given as Eq. (2)–(3) of the source paper, `max(1, (RSSI+92)/32)`, is pinned at
-its floor of 1.0 for any RSSI below −60 dBm. Under the source paper's own
-path-loss constants that means any inter-node spacing beyond roughly 1.5 m, so
-at realistic deployment distances the metric is numerically identical to
-hop-count. This is visible directly in `results/raw/`, where the `lqi-literal`
-and `hopcount` rows match in every condition. The same equations also invert
-direction — a stronger received signal yields a *higher* cost — which conflicts
-with the paper's own statement that lower LQI denotes better quality.
+its floor of 1.0 for any RSSI below −60 dBm. The v1.1.0 R6 diagnostic confirms
+this directly in the frozen static primary data: all 105 hopcount/lqi-literal
+configuration pairs match exactly across 2,100 main rows and 399,000 route
+rows (zero status, routeFingerprint, or routeHopCount mismatches). The same
+literal equations also invert direction — a stronger received signal yields a
+*higher* cost — which conflicts with the paper's own lower-is-better convention.
 
-**2. The headline energy result depends on an unspecified parameter.** LEO
-re-broadcasts a discovery frame when a better-metric copy arrives, with no
-upper bound stated in the source paper. A bound is required in practice; its
-value inverts the result, from 1.6% below hop-count at a bound of one to 3.3%
-above it at a bound of three. See `figures/fig2_cap_sensitivity.png`.
+**2. The energy conclusion is relay-cap dependent, not universal.** In the
+v1.1.0 primary static non-interference analysis, LEO total energy versus
+hopcount is −4.97% at relayCap=1 (Holm-adjusted p=0.000210), −0.23% at cap=2
+(not significant), and +1.90% at cap=3 (not significant). Against operational
+LQI, LEO uses more energy in all three non-interference relay-cap strata
+(+6.08% to +13.74%, all Holm-significant). See `figures/v1.1.0/` and
+`repair_reports/R6_STATISTICAL_REANALYSIS_v1.1.0.md`.
 
 ## Quick start
 
 ```bash
-# 1. Verify the equations independently of any simulation
-python3 equation_oracle.py                      # 13/13 expected
+# 1. Verify the equation vectors covered by the independent oracle
+python3 equation_oracle.py                      # 13/13 vectors expected
 
 # 2. Place the module in an ns-3 tree (3.40+, tested on 3.48)
 cp -r contrib/leo-wsn  <ns-3-dir>/contrib/
@@ -68,8 +100,12 @@ diff cpp_out.txt py_out.txt && echo "ORACLE AND C++ AGREE"
 ./ns3 run "leo-topologies --layout=triangle --envFactor=2.5 --metric=leo --runs=20"
 ```
 
-To reanalyse the released results **without installing ns-3**, see the last
-section of `DATA_DICTIONARY.md`.
+To reproduce the authoritative v1.1.0 analysis **without installing ns-3**,
+first verify and extract the separate `leo-v1.1.0-results.tar.gz` asset at the
+repository root (see `RELEASE_ASSETS.md`). Then run
+`python3 analysis/r6_statistical_reanalysis.py` against the governed
+`results/v1.1.0/` dataset, followed by `python3 analysis/r7_make_figures.py`.
+`DATA_DICTIONARY.md` marks the older v1.0.0 analysis path as historical.
 
 ## Citing
 
@@ -97,7 +133,7 @@ publication.
 | Eq. (14)| P_l = R·P_TX,max[mW] + P_TX[mW] + P_R[mW] | `LeoMetric::LinkPowerMw` |
 | Eq. (15)| dBm→mW conversion | `DbmToMw` / `MwToDbm` |
 | Eq. (16)| R = max(avg(R_AB,R_BA), R_D) | `LeoMetric::AverageRetransmissions` |
-| Eq. (17)| R_D from power deficiency | `LeoMetric::RetransmissionsFromPowerDeficiency` |
+| Eq. (17)| R_D from power deficiency; v1.1.0 exposes bounded-vs-literal policy explicitly (`boundEq17ToRMax`) | `LeoMetric::RetransmissionsFromPowerDeficiency` |
 | Eq. (18)| link signal loss vs. distance | `LinkSignalLossDb` (wsn-channel.h) |
 | Algorithm 1 | pre-TX ATPC computation | `AlgorithmOnePreTransmission` |
 | Algorithm 2 | post-RX ReqTXP update | `AlgorithmTwoPostReception` |
@@ -214,17 +250,22 @@ had to be chosen here; report them explicitly if you use this code:
    (the paper notes they are "not constant in all directions" and excludes
    them from `P_TX`/`P_R` for the same reason); if your target hardware
    has known gains, wire them into `atpc.h`'s helper functions.
-6. **Triangle-with-interference variant** ("fI" scenarios in Fig. 5/6) is
-   left as a documented TODO hook in `leo-topologies.cc` — implement the
-   per-link SNR penalty for hypotenuse nodes before drawing conclusions
-   about that specific scenario.
-7. **Timeout/EventId bookkeeping** in `WsnRoutingApp` uses a single
-   `m_timeoutEvent` member for the gateway's outstanding ping rather than
-   a per-sequence-number map; because the ping cadence and timeout are
-   both 1 s in the current defaults this does not double-count in the
-   sequential single-gateway scenario tested here, but if you extend the
-   script to multiple concurrent pingers, switch this to a keyed map (the
-   same pattern already used for `m_pendingAcks`).
+6. **Triangle-with-interference variant** ("fI" scenarios in Fig. 5/6)
+   is implemented as a **declared reconstruction**, not a source-identical
+   PHY model. `--interferenceDb` applies a per-link SNR penalty (default
+   15 dB) to links touching the selected hypotenuse nodes. The paper/source
+   material available to this reproduction does not publish a numeric dB
+   penalty that justifies 15 dB, so this value is a sensitivity parameter,
+   not an authoritative constant. The effective post-penalty SNR is now
+   preserved in the Neighbor Table and reused by the first-contact LQI
+   fallback, so routing and channel PRR no longer evaluate different SNRs.
+7. **Transaction/time-out bookkeeping** is identity-safe in v1.1.0:
+   ping timeouts are keyed by `(targetId,seq)`, path-discovery completion
+   is matched to the current `(targetId,floodId)`, and failed discoveries
+   have an explicit liveness timeout. `--ackTimeoutS` and
+   `--discoveryTimeoutS` are reconstruction parameters and must be frozen
+   in the experiment manifest; neither is claimed as a source-published
+   timing constant.
 9. **Destination-side route selection window (`m_discoveryWindowS`,
    default 0.15 s).** Earlier revisions of this code let each destination
    reply to whichever PATH_DISCOVERY copy arrived *first*, for every
@@ -409,16 +450,14 @@ implemented in full except where noted:
 - **P0-1 (ping-outcome column semantics).** Added `NodeStats::pingNoRoute`,
   separate from `pingTimeouts` (which now means "sent but no reply").
   CSV gained a `pingNoRoute` column.
-- **P0-2 (`WsnChannel::GetDevice` signature) -- NOT applied, and here is
-  why.** `fix_plan.md` asserts `ns3::Channel::GetDevice` takes `uint32_t`
-  and that our `std::size_t` override therefore leaves `WsnChannel`
-  abstract and uncompilable. This is contradicted by direct evidence: the
-  exact code with the `std::size_t` signature was built and run
-  successfully multiple times on a real ns-3.48 checkout during this
-  project's development (producing valid CSV output across dozens of
-  scenarios). If your ns-3 version is older and genuinely uses `uint32_t`
-  here, you will get a real "does not override" compiler error --
-  in that case, and only then, change the override to `uint32_t`.
+- **P0-2 (`WsnChannel` / ns-3 Channel contract) -- superseded by
+  the v1.1.0 R3 repair.** The original `std::size_t` override does compile
+  on ns-3.48, so the earlier claimed signature mismatch was not the real
+  defect. The deeper problem was semantic: `WsnChannel` inherited from
+  `ns3::Channel` even though `WsnNetDevice` is not an `ns3::NetDevice`,
+  forcing `GetDevice()` to return `nullptr`. R3 removes that misleading
+  inheritance entirely. `WsnChannel` is now an `ns3::Object` and exposes
+  `GetWsnDevice()` for its actual device type.
 - **P0-3 (interference variant).** `WsnChannel::SetLinkSnrPenaltyDb`
   implemented; `leo-topologies.cc` now applies `--interferenceDb` (default
   15 dB, undocumented in the paper -- a declared stand-in, not a published
@@ -460,14 +499,14 @@ implemented in full except where noted:
   `energy_<frameType>` column per `FrameType` (netScan, connect,
   pathDiscovery, pathDiscoveryReply, ping, pingReply, ack), summed across
   all nodes per run.
-- **P2-2 (statistics).** `analyze-results.py` now uses a t-distribution
-  critical value (table for df 1-29, falling back to z=1.96 beyond that)
-  instead of a fixed z=1.96, and additionally outputs
-  `summary_ratios.csv`: each metric's mean energy as a percentage of the
-  three-metric mean for that (layout, envFactor) cell, with a
-  Best/Average/Worst reachability bucket assigned by envFactor terciles
-  per layout (mirroring Fig. 7's presentation), plus the interference
-  integrity check described under P0-3.
+- **P2-2 (legacy v1.0.0 statistics; superseded).**
+  `analyze-results.py` and `significance_test.py` are retained for
+  historical traceability only. Their v1.0.0 workflow does not satisfy the
+  v1.1.0 statistical gate because it does not implement the R6 pairing,
+  scenario-cell inference, direct routeFingerprint analysis, or Holm family
+  correction. Authoritative v1.1.0 inference is produced only by
+  `analysis/r6_statistical_reanalysis.py` under
+  `experiments/v1.1.0/R6_STATISTICAL_ANALYSIS_PLAN.md`.
 - **P2-3 (scenario-grid honesty).** See the run-count note at the top of
   `leo-topologies.cc`: the paper's own text is arithmetically
   inconsistent about total run counts (24 files x 3 metrics x 20 runs =
@@ -486,13 +525,91 @@ implemented in full except where noted:
 | Eq. (2)-(3) (nRF52840 LQI) | SUBSTITUTED (degenerates under realistic spacing; kept as static helpers) | `LqiFromRssiDbm`/`LinkCostFromLqi` |
 | Eq. (6)-(10) (ATPC) | LIVE (both feedback modes) | `HandleAck`, `OnReceive`, `SendUnicastReliable` |
 | Eq. (11) additive route weight | LIVE (inlined); `IRouteMetric::CombineRoute` is DEAD (never called) | `wsn-routing-app.cc` |
-| Eq. (12)-(13) one-way-link rejection | LIVE (as of P1-1) | `LeoMetric::IsBidirectional` |
+| Eq. (12)-(13) one-way-link rejection | LIVE in the v1.1.0 repair branch; v1.0.0 computed link usability but did not enforce rejection | `LeoMetric::IsBidirectional` + routing guards |
 | Eq. (14)-(17) LEO cost | LIVE | `LeoMetric` |
 | Eq. (15) dBm<->mW | `DbmToMw` LIVE; `MwToDbm` DEAD (unused) | `route-metrics.cc` |
 | Eq. (18) path loss | LIVE | `LinkSignalLossDb` |
 | Fig. 2 PRR(SNR) | LIVE, digitized from Fig. 2 (Sept 2026, see `data/fig2-digitized/`) | `kPrrCurve` |
 | Eq. (2)-(3) literal, `--metric=lqi-literal` | LIVE (as of a third review round), no correction applied -- exposes a verified directional inconsistency (stronger links get HIGHER cost) in addition to the floor-effect degeneracy already documented for `ZigbeeLqiMetric` | `ZigbeeLqiLiteralMetric` |
 | Algorithm 1 & 2 | LIVE (as of P1-1) | `atpc.cc` |
+
+## v1.1.0 R2 radio/physical/energy requalification
+
+The repair branch changes several semantics that materially affect any
+future raw dataset:
+
+- **TX power is a physical property, not an energy-model switch.** Requested
+  powers are always realized on the nRF52840's supported discrete TXPOWER
+  levels. A request such as 3.2 dBm therefore becomes +4 dBm whether
+  `useNrf52840Energy` is true or false.
+- **The LEO metric uses the same realized `P_TX` as the channel.** It no
+  longer scores a continuous requested power while the hardware transmits
+  a different discrete value.
+- **Failed reception attempts consume RX energy.** A frame that fails the
+  PRR/CRC outcome is not delivered to routing/ATPC state, but the intended
+  unicast receiver (or broadcast listener) is charged the corresponding
+  frame-duration RX energy.
+- **Missing ACKs consume listening energy.** An ACK timeout charges the
+  sender for the configured `ackTimeoutS` receive/listen window; a
+  successfully received ACK is already charged as its decoded frame.
+- **Effective SNR is preserved.** `NeighborEntry::lastSnrDb` stores the
+  channel's post-interference SNR, preventing the LQI first-contact
+  fallback from silently reconstructing an unpenalized SNR from RSSI.
+- **Eq. (17) policy is explicit.** `boundEq17ToRMax=true` reproduces the
+  historical v1.0.0 clamp; `false` evaluates the transcribed equation
+  literally. For `R_max=4` and a 15 dB power deficiency, those policies
+  give `R_D=4` and `R_D=40`, respectively. The final production choice
+  is an experiment-freeze/source-fidelity decision, not a hidden code choice.
+- **Finite ARQ remains an operational reconstruction of the reliability
+  process**, not a claim that the implementation is algebraically
+  identical to the paper's Eq. (4). `macMaxRetries`, `ackTimeoutS`, and
+  `discoveryTimeoutS` are now CLI-exposed so R4 can freeze and sweep them.
+
+The exact source-paper justification for the numeric interference penalty,
+the operational ARQ substitution, and whether Eq. (17) should be bounded
+is still treated as **SOURCE_FIDELITY_PENDING** until an independently
+verifiable full-text source/author clarification is available.
+
+## v1.1.0 R3 RNG/robustness/runtime requalification
+
+R3 removes runtime behavior that previously depended on hidden global
+allocation order and adds fail-fast guards around unsafe experiment inputs.
+
+- **Stable RNG identities.** `WsnChannel::AssignStreams()` binds the
+  channel PRR generator explicitly. The driver resets ns-3's automatic
+  stream index at each repetition, uses channel stream 10, and reserves
+  deterministic per-node mobility blocks starting at stream 1000 with a
+  stride of 16. Adding unrelated RNG objects no longer changes the
+  channel's 64-draw regression sequence.
+- **Replay qualification.** Independent driver executions with the same
+  seed were byte-identical for static, random-walk, and random-waypoint
+  smoke scenarios. This establishes stable component/run identity for
+  paired experiments. It does not imply that different routing metrics
+  consume an identical number of random draws after their trajectories
+  diverge.
+- **Fail-fast input/configuration validation.** Dangerous values such as
+  `nNodes=0`, zero diagnostics periods, invalid bitrate/overhead, invalid
+  EMA, bad mobility ranges, output-path collisions, and failed CSV opens
+  now abort before simulation instead of underflowing, looping, or silently
+  losing output. The channel also aborts if an endpoint node id is outside
+  `NodeList` or either endpoint lacks the required `MobilityModel`;
+  the old silent `distance=1 m` fallback has been removed. Core setters
+  likewise reject non-finite/invalid timing values.
+- **Runtime instrumentation found and closed a real leak.** A monolithic
+  build of the leo-wsn sources plus the driver was run under
+  AddressSanitizer/LeakSanitizer and UndefinedBehaviorSanitizer. After the
+  channel-contract repair, the first sanitizer rerun reported **4320 bytes
+  in 64 leaked allocations**, traced to the strong ownership cycle
+  `WsnChannel -> Ptr<WsnNetDevice> -> Ptr<WsnChannel>`. The device's
+  channel back-reference is now explicitly non-owning. The same instrumented
+  static, random-walk, and random-waypoint runs were repeated afterward
+  with no AddressSanitizer, LeakSanitizer, or UBSan finding.
+- **Honest ns-3 object contract.** `WsnChannel` no longer subclasses
+  `ns3::Channel` merely to satisfy an interface it cannot truthfully
+  implement; it is an `Object` with a typed `GetWsnDevice()` accessor.
+
+Scientific raw-data regeneration remains closed until the subsequent
+experiment-freeze gate is complete.
 
 ## Third-round addition: datasheet-anchored nRF52840 energy model (opt-in)
 
@@ -534,14 +651,15 @@ alternative to the original continuous `DbmToMw(dbm)` / fixed
   `officialSource = false`. This is a declared, disclosed approximation
   (per the LeapSpace review's guidance), not a claim of datasheet-grade
   accuracy at every level.
-- Enable via `RadioParameters::useNrf52840Energy = true` (default
-  `false`, so existing results/comparisons remain reproducible without
-  this change) or `--useNrf52840Energy=true` on the command line. When
-  enabled, it also changes which discrete power gets radiated (and hence
-  the channel's RSSI/PRR computation), not just the energy bookkeeping --
-  so results with this flag on are not directly comparable, run-for-run,
-  to results collected with it off; treat it as a separate sensitivity
-  scenario, not a drop-in refinement of prior runs.
+- `RadioParameters::useNrf52840Energy` / `--useNrf52840Energy` now
+  controls **energy accounting only**. Physical TX realization is always
+  discrete for the modeled nRF52840, through the single authoritative
+  `RealizeNrf52840TxPowerDbm()` path used by data, ACK, channel RSSI/PRR,
+  and the LEO metric's `P_TX` term. This intentionally breaks v1.0.0's
+  coupling where disabling the current model also allowed physically
+  impossible continuous TX levels. Consequently, v1.0.0 raw CSVs are
+  historical artifacts and must be regenerated after the v1.1.0 repair;
+  they cannot be "patched" into equivalence.
 - **HFXO clock current can now be added back in (opt-in), sourced from
   the same document, Section 5.4.4.2.** The table's RADIO-only current
   excludes the current the HFXO crystal oscillator itself draws while
@@ -658,16 +776,18 @@ prior static-node behavior unchanged):
   after the warm-up period (a trend would indicate the warm-up was too
   short or a speed-decay artifact is still present).
 
-**What this does NOT do**: this is a from-scratch implementation added in
-this round; no mobility-condition results have been collected or
-validated in this repository yet. Run the diagnostics check first, then a
-small-scale sweep, before trusting any full-scale mobility results for
-publication.
+**Current v1.1.0 status**: mobility remains a from-scratch exploratory
+extension rather than part of source-reproduction primary inference, but it
+has now been executed and validated under the frozen R5 plan. R6 reports walk
+and random-waypoint results separately. These results must remain labeled
+**exploratory** and must not be pooled into the static source-constrained
+primary estimand.
 
-## Sixth-round addition: pre-publication test checklist (how to actually run it)
+## Verification checklist
 
-Seven tests, in the order recommended before treating results as
-publication-ready:
+Seven checks retained for engineering/reproduction work. The governed v1.1.0
+R1–R7 gates and their closeout receipts are the authoritative release path;
+passing any one checklist item alone does not establish publication readiness:
 
 1. **Equation-level unit oracle — two parts, both required.**
 
@@ -680,9 +800,9 @@ publication-ready:
    including the Fourth-round directional-inconsistency worked example).
    Must print `13/13 checks passed`.
 
-   Part B (Python oracle vs. the REAL C++ — **this is the part that
-   actually validates the shipped code**; Part A alone only proves the
-   oracle matches hand arithmetic, not that `route-metrics.cc` agrees
+   Part B (Python oracle vs. the REAL C++ — **this validates the
+   covered metric functions against the oracle**; Part A alone only proves
+   the oracle matches hand arithmetic, not that `route-metrics.cc` agrees
    with either):
    ```bash
    ./ns3 run leo-equation-check > cpp_out.txt
@@ -716,15 +836,18 @@ publication-ready:
    Inspect `mobility-diagnostics.csv`: `avgNodeDegree` should stay broadly
    comparable to the static baseline for `walk`, and should not visibly
    trend/decay over `simTimeS` for `waypoint` after the warm-up period.
-4. **Statistical significance** (after collecting `leo-results.csv` via
-   `run-experiments.sh`):
+4. **Statistical reanalysis — v1.1.0 authoritative path.**
+   Do **not** use `significance_test.py` for release claims. Run:
    ```bash
-   python3 significance_test.py leo-results.csv --baseline leo --alpha 0.05
+   python3 analysis/r6_statistical_reanalysis.py
    ```
-   Produces `significance.csv`: Welch's t-test (unequal-variance) p-value
-   per (layout, envFactor) comparing LEO against every other metric
-   present (hopcount, lqi, lqi-literal). Report the p-value and percent
-   difference for every comparison, not just the ones that favor LEO.
+   The analyzer requires R5 integrity PASS, pairs by frozen scenario/run
+   identity, keeps relay-cap and interference strata separate, uses direct
+   routeFingerprint evidence, computes hierarchical-bootstrap confidence
+   intervals, performs cell-level sign-flip inference, and applies
+   Holm-Bonferroni correction within each pre-specified endpoint/comparator
+   family. The exact method is frozen in
+   `experiments/v1.1.0/R6_STATISTICAL_ANALYSIS_PLAN.md`.
 5. **Sensitivity analysis** on undocumented constants, now CLI-exposed:
    ```bash
    for alpha in 0.1 0.2 0.3 0.5; do
@@ -735,36 +858,34 @@ publication-ready:
    done
    ```
    Also sweep `--backgroundNoiseDbm` and `--interferenceDb` the same way
-   (already CLI-exposed from earlier rounds). Confirm LEO's qualitative
-   ranking versus the baselines does not flip across the tested range.
-6. **Independent-seed reproducibility**:
-   ```bash
-   ./ns3 run "leo-topologies --layout=circle --envFactor=2.5 --metric=leo --seedBase=42 --runs=20 --outCsv=seed42.csv"
-   ```
-   Re-run `analyze-results.py`/`significance_test.py` on the new seed and
-   confirm the same qualitative conclusion holds (not bit-identical
-   numbers -- a directionally consistent result).
+   (already CLI-exposed from earlier rounds). Report **all** direction
+   changes rather than requiring a stable ranking. The frozen v1.1.0 OFAT
+   analysis confirms that several reconstruction constants materially change
+   energy and routing outcomes.
+6. **Additional-seed robustness extension (outside the frozen R5 plan).**
+   R3 already verifies byte-identical replay for the same seed/stream identity.
+   A genuinely independent `seedBase` campaign is a new experiment and must
+   use a new manifest/plan version rather than overwrite or append to the frozen
+   R5 dataset. Analyse such an extension with the paired R6 methodology, not
+   the legacy `analyze-results.py`/`significance_test.py` workflow. Do not
+   require a preferred direction to reproduce; report any directional change.
 7. **Qualitative comparison against the source paper's Figs. 5-7** --
-   manual: no script, compare trend direction (does LEO show lower
-   energy/timeouts than Hop-count/LQI in the same relative pattern the
-   paper reports?) and note any layout/envFactor combination where the
-   direction disagrees, rather than only reporting agreements.
+   manual: no script. Compare the reconstructed and published trend directions
+   for each reported endpoint/comparator, and record both agreements and
+   disagreements. Do not require LEO to be lower, and do not promote a
+   trend-level comparison into an exact numerical reproduction claim.
 
 ## What this code does *not* claim
 
 
 
-This module reproduces the paper's **equations** faithfully and gives you
-a working harness to reproduce its **experimental design** (six layouts,
-sweep of environmental factor, 20 repetitions per cell, gateway-ping
-methodology, energy/timeout statistics). It does **not** claim to
-reproduce the paper's *absolute* published numbers (e.g. the exact mWs
-values in Fig. 5), because several inputs needed for that (exact node
-coordinates, MAC timing constants, discrete-TX-power current draw beyond
-what Section 6.20.15 documents) are not published in the paper or not
-fully covered by public datasheets. The PRR/SNR curve (Fig. 2) is now a
-direct digitization rather than an approximation (see item 1 above), but
-remains one independent digitization with inherent pixel-level error, not
-the authors' own raw data. Any comparison to the published figures should
-be reported as a qualitative/trend-level reproduction unless you
-substitute the authors' own raw data for the remaining items above.
+This module is an audited **independent source-constrained reconstruction**.
+It implements the documented equations and methodology where recoverable,
+while exposing source-unpublished or ambiguous choices as explicit
+reconstruction parameters and sensitivity analyses. It does **not** claim an
+exact replay of the authors' unpublished simulator, exact coordinates, exact
+interference/PER implementation, exact timing constants, or exact absolute
+published energy values. The PRR/SNR curve is an independent digitization of
+Fig. 2 rather than the authors' raw data. Comparisons to the source paper must
+therefore be described as reconstruction/trend evidence with the documented
+source-fidelity limitations, not as exact numerical reproduction.

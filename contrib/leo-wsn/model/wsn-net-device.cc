@@ -81,12 +81,21 @@ WsnNetDevice::WsnNetDevice()
 }
 
 void
-WsnNetDevice::SetChannel(Ptr<WsnChannel> channel)
+WsnNetDevice::DoDispose()
 {
-    m_channel = channel;
+    m_receiveCallback = WsnReceiveCallback();
+    m_receiveFailureCallback = WsnReceiveCallback();
+    m_channel = nullptr;
+    Object::DoDispose();
 }
 
-Ptr<WsnChannel>
+void
+WsnNetDevice::SetChannel(Ptr<WsnChannel> channel)
+{
+    m_channel = PeekPointer(channel);
+}
+
+WsnChannel*
 WsnNetDevice::GetChannel() const
 {
     return m_channel;
@@ -147,6 +156,12 @@ WsnNetDevice::SetReceiveCallback(WsnReceiveCallback cb)
 }
 
 void
+WsnNetDevice::SetReceiveFailureCallback(WsnReceiveCallback cb)
+{
+    m_receiveFailureCallback = cb;
+}
+
+void
 WsnNetDevice::Send(Ptr<Packet> packet)
 {
     NS_LOG_FUNCTION(this << packet);
@@ -172,6 +187,15 @@ WsnNetDevice::Receive(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag tag)
     if (!m_receiveCallback.IsNull())
     {
         m_receiveCallback(packet, from, tag);
+    }
+}
+
+void
+WsnNetDevice::ReceiveFailed(Ptr<Packet> packet, Mac48Address from, WsnLinkInfoTag tag)
+{
+    if (!m_receiveFailureCallback.IsNull())
+    {
+        m_receiveFailureCallback(packet, from, tag);
     }
 }
 

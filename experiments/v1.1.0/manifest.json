@@ -1,0 +1,393 @@
+{
+  "analysis_freeze": {
+    "diagnostic_comparator": "lqi-literal",
+    "multiplicity_policy": "R6 must define an endpoint/comparison family and multiplicity correction before inferential output; raw p<0.05 alone is not a final claim.",
+    "never_pool_across": [
+      "interference",
+      "relayCap",
+      "mobility",
+      "energyAccountingMode",
+      "eq17Policy"
+    ],
+    "outcome_dependent_inclusion_filter": "FORBIDDEN",
+    "pairing_keys": [
+      "scenarioSet",
+      "layout",
+      "envFactor",
+      "interference",
+      "relayCap",
+      "run",
+      "targetId",
+      "seq"
+    ],
+    "primary_comparators": [
+      "hopcount",
+      "lqi"
+    ],
+    "primary_estimands": [
+      "totalEnergyMWs",
+      "pingTimeouts",
+      "pingNoRoute",
+      "successful-ping routeFingerprint equality/difference"
+    ],
+    "route_discrimination_from_energy_equality": "FORBIDDEN"
+  },
+  "experiment_id": "LEO_V1_1_REQUALIFICATION_20260920",
+  "fixed_reconstruction_parameters": {
+    "ackTimeoutS": 0.05,
+    "atpcMode": "with-feedback",
+    "backgroundNoiseDbm": -116.0,
+    "bitrateBps": 1000000.0,
+    "discoveryTimeoutS": 1.0,
+    "discoveryWindowS": 0.15,
+    "emaAlpha": 0.2,
+    "hfxoCrystal": "none",
+    "macMaxRetries": 4,
+    "nNodes": 20,
+    "pingPayloadBytes": 100,
+    "radioOverheadS": 0.0001,
+    "signalLossPerMDbm": -64.0,
+    "spacingM": 15.0
+  },
+  "gate_policy": {
+    "production_execution_allowed": false,
+    "production_execution_gate": "R5 opens only after R4 closeout",
+    "r4_allowed_execution": "validator, plan expansion, tiny preflight only"
+  },
+  "outputs": {
+    "main_csv_required_identity_columns": [
+      "experimentId",
+      "scenarioSet",
+      "scenarioId",
+      "manifestSha256",
+      "layout",
+      "envFactor",
+      "metric",
+      "interference",
+      "relayCap",
+      "run",
+      "seedBase",
+      "ns3Run",
+      "nNodes",
+      "spacingM",
+      "signalLossPerMDbm",
+      "backgroundNoiseDbm",
+      "interferenceDb",
+      "mobility",
+      "emaAlpha",
+      "discoveryWindowS",
+      "discoveryTimeoutS",
+      "macMaxRetries",
+      "ackTimeoutS",
+      "bitrateBps",
+      "radioOverheadS",
+      "useNrf52840Energy",
+      "hfxoCrystal",
+      "boundEq17ToRMax",
+      "pingPayloadBytes",
+      "atpcMode"
+    ],
+    "raw_schema_version": "R4_V1",
+    "require_manifest_sha256_in_every_row": true,
+    "require_no_pending_ping_trace_after_run": true,
+    "require_route_evidence_csv": true,
+    "route_csv_required_columns": [
+      "experimentId",
+      "scenarioSet",
+      "scenarioId",
+      "manifestSha256",
+      "layout",
+      "envFactor",
+      "metric",
+      "interference",
+      "relayCap",
+      "run",
+      "seedBase",
+      "ns3Run",
+      "targetId",
+      "seq",
+      "status",
+      "routeFingerprint",
+      "routeHopCount"
+    ],
+    "route_identity_semantics": "routeFingerprint is a direct forward-PING path fingerprint updated by traversed node IDs; it is used for route equality/comparison but is not a reversible node-sequence encoding."
+  },
+  "primary": {
+    "boundEq17ToRMax": false,
+    "claim_boundary": "Balanced static reconstruction over all six reconstructed Fig.4 shapes. Exact source coordinates/scenario-file grid are unavailable; no exact-source-grid claim is permitted.",
+    "energy_interpretation": "Primary total-energy accounting uses the simplified reconstruction proxy. Hardware-current accounting is a separately stratified sensitivity.",
+    "envFactors": [
+      2.0,
+      2.25,
+      2.5,
+      2.625,
+      3.0
+    ],
+    "eq17_interpretation": "Primary uses literal transcribed Eq.17 to avoid silently adding a clamp. This is not claimed to prove the authors' intended implementation.",
+    "expected_ping_trace_rows": 1596000,
+    "expected_scenario_cells_per_relay_cap": 35,
+    "expected_simulation_rows": 8400,
+    "id": "primary_static_source_constrained",
+    "interference_policy": {
+      "additional_interference_condition_for_layouts": [
+        "triangle"
+      ],
+      "interferenceDb": 15.0,
+      "interpretation": "declared SNR-penalty reconstruction; source-fidelity pending",
+      "standard_condition_for_all_layouts": true
+    },
+    "layouts": [
+      "around",
+      "one-side",
+      "u-shaped",
+      "line",
+      "circle",
+      "triangle"
+    ],
+    "metrics": [
+      "hopcount",
+      "lqi",
+      "lqi-literal",
+      "leo"
+    ],
+    "mobility": [
+      "none"
+    ],
+    "relayCaps": [
+      1,
+      2,
+      3
+    ],
+    "required_for_release": true,
+    "role": "PRIMARY",
+    "useNrf52840Energy": false
+  },
+  "rng": {
+    "channel_stream": 10,
+    "mobility_stream_base": 1000,
+    "mobility_stream_stride_per_node": 16,
+    "ns3_run_number": "run_index + 1",
+    "pairing_rule": "Metrics are paired by identical scenario dimensions and run index. Explicit stream identities are held fixed; protocol divergence may still consume different numbers of draws.",
+    "reset_automatic_stream_index_each_run": true,
+    "runs_per_configuration": 20,
+    "seed_base": 42
+  },
+  "schema_version": "1.0",
+  "scope_statement": "Independent source-constrained ns-3 reconstruction and sensitivity study. Not an exact replay of unpublished source simulator files or coordinates.",
+  "sensitivity_sets": [
+    {
+      "envFactors": [
+        2.25,
+        2.5,
+        2.625
+      ],
+      "expected_simulation_rows": 720,
+      "id": "eq17_bounded_sensitivity",
+      "interference_policy": "standard_plus_triangle_interference",
+      "layouts": [
+        "line",
+        "u-shaped",
+        "triangle"
+      ],
+      "metrics": [
+        "leo"
+      ],
+      "mobility": [
+        "none"
+      ],
+      "overrides": {
+        "boundEq17ToRMax": true,
+        "useNrf52840Energy": false
+      },
+      "purpose": "Compare historical bounded Eq17 policy against literal primary semantics.",
+      "relayCaps": [
+        1,
+        2,
+        3
+      ],
+      "required_for_release": true,
+      "role": "MANDATORY_SENSITIVITY"
+    },
+    {
+      "envFactors": [
+        2.25,
+        2.5,
+        2.625
+      ],
+      "expected_simulation_rows": 1440,
+      "id": "nrf52840_energy_sensitivity",
+      "interference_policy": "standard_plus_triangle_interference",
+      "layouts": [
+        "line",
+        "u-shaped",
+        "triangle"
+      ],
+      "metrics": [
+        "hopcount",
+        "leo"
+      ],
+      "mobility": [
+        "none"
+      ],
+      "overrides": {
+        "boundEq17ToRMax": false,
+        "hfxoCrystal": "none",
+        "useNrf52840Energy": true
+      },
+      "purpose": "Quantify effect of RADIO-current energy accounting while physical TX levels remain unchanged.",
+      "relayCaps": [
+        1,
+        2,
+        3
+      ],
+      "required_for_release": true,
+      "role": "MANDATORY_SENSITIVITY"
+    },
+    {
+      "deduplication_rule": "Run the shared reference configuration once; for each factor run only its two non-reference alternatives.",
+      "expected_simulation_rows": 340,
+      "expected_unique_configurations": 17,
+      "factors": {
+        "ackTimeoutS": [
+          0.02,
+          0.05,
+          0.1
+        ],
+        "backgroundNoiseDbm": [
+          -119.0,
+          -116.0,
+          -113.0
+        ],
+        "discoveryTimeoutS": [
+          0.5,
+          1.0,
+          2.0
+        ],
+        "discoveryWindowS": [
+          0.05,
+          0.15,
+          0.3
+        ],
+        "emaAlpha": [
+          0.1,
+          0.2,
+          0.5
+        ],
+        "interferenceDb": [
+          5.0,
+          15.0,
+          25.0
+        ],
+        "radioOverheadS": [
+          0.0,
+          0.0001,
+          0.0002
+        ],
+        "spacingM": [
+          10.0,
+          15.0,
+          20.0
+        ]
+      },
+      "id": "reconstruction_ofat_sensitivity",
+      "purpose": "One-factor-at-a-time stress test for unpublished reconstruction constants.",
+      "reference": {
+        "boundEq17ToRMax": false,
+        "envFactor": 2.5,
+        "interference": true,
+        "layout": "triangle",
+        "metric": "leo",
+        "mobility": "none",
+        "relayCap": 3,
+        "useNrf52840Energy": false
+      },
+      "required_for_release": true,
+      "role": "MANDATORY_SENSITIVITY"
+    },
+    {
+      "envFactors": [
+        2.25,
+        2.5,
+        2.625
+      ],
+      "expected_simulation_rows": 1440,
+      "id": "mobility_extension",
+      "interference": false,
+      "layouts": [
+        "circle",
+        "u-shaped",
+        "triangle"
+      ],
+      "metrics": [
+        "hopcount",
+        "lqi",
+        "lqi-literal",
+        "leo"
+      ],
+      "mobility_variants": [
+        {
+          "mobility": "walk",
+          "mobilityBoxFrac": 0.3,
+          "mobilitySpeedMax": 2.0,
+          "mobilitySpeedMin": 0.5,
+          "mobilityWarmupS": 0.0
+        },
+        {
+          "mobility": "waypoint",
+          "mobilityPauseMax": 2.0,
+          "mobilityPauseMin": 0.0,
+          "mobilitySpeedMax": 2.0,
+          "mobilitySpeedMin": 0.5,
+          "mobilityWarmupS": 60.0
+        }
+      ],
+      "overrides": {
+        "boundEq17ToRMax": false,
+        "useNrf52840Energy": false
+      },
+      "purpose": "Mobility stress test; explicitly not part of source-paper reproduction claims.",
+      "relayCaps": [
+        3
+      ],
+      "required_for_release": false,
+      "role": "EXPLORATORY_EXTENSION"
+    }
+  ],
+  "software_policy": {
+    "ns3_commit": "d2add90b452d600cfb4859baed8e9ea633519447",
+    "ns3_series": "3.48",
+    "repair_branch": "repair/v1.1.0",
+    "require_binary_sha256": true,
+    "require_clean_worktree": true,
+    "require_source_commit_and_tree": true
+  },
+  "source_fidelity": {
+    "confirmed": [
+      "article identity and DOI",
+      "six Fig.4 layout categories in shape only",
+      "20 repetitions statement",
+      "100-byte ping payload",
+      "signalLossPerMDbm=-64",
+      "environment factor range 2..3",
+      "SNR threshold constants represented in metric implementation",
+      "digitized Fig.2 PRR curve provenance"
+    ],
+    "pending": [
+      "exact source scenario-file grid and coordinates",
+      "exact numeric interference/PER implementation",
+      "operational interpretation of Eq.4 versus finite ARQ",
+      "whether Eq.17 is intended to be bounded by R_max",
+      "unpublished timing constants",
+      "exact source radio/energy implementation details"
+    ],
+    "prohibited_claims": [
+      "exact source experiment replay",
+      "authors' original simulator code reproduction",
+      "source-authoritative 15 dB interference penalty",
+      "source-authoritative relay cap",
+      "hardware-total nRF52840 node energy from the simplified primary proxy"
+    ]
+  },
+  "status": "FROZEN_DESIGN_NO_PRODUCTION_EXECUTION_YET",
+  "title": "LEO v1.1.0 frozen experiment design"
+}

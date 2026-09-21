@@ -648,7 +648,7 @@ TypeId
 WsnChannel::GetTypeId()
 {
     static TypeId tid = TypeId("ns3::leo::WsnChannel")
-                             .SetParent<Channel>()
+                             .SetParent<Object>()
                              .SetGroupName("LeoWsn")
                              .AddConstructor<WsnChannel>();
     return tid;
@@ -657,6 +657,30 @@ WsnChannel::GetTypeId()
 WsnChannel::WsnChannel()
 {
     m_rng = CreateObject<UniformRandomVariable>();
+}
+
+int64_t
+WsnChannel::AssignStreams(int64_t stream)
+{
+    m_rng->SetStream(stream);
+    return 1;
+}
+
+void
+WsnChannel::DoDispose()
+{
+    // Break the strong channel <-> device ownership cycle explicitly.
+    for (auto& dev : m_devices)
+    {
+        if (dev)
+        {
+            dev->SetChannel(nullptr);
+        }
+    }
+    m_devices.clear();
+    m_linkSnrPenaltyDb.clear();
+    m_rng = nullptr;
+    Object::DoDispose();
 }
 
 void
@@ -671,13 +695,10 @@ WsnChannel::GetNDevices() const
     return m_devices.size();
 }
 
-Ptr<NetDevice>
-WsnChannel::GetDevice(std::size_t /*i*/) const
+Ptr<WsnNetDevice>
+WsnChannel::GetWsnDevice(std::size_t i) const
 {
-    // WsnNetDevice deliberately does not subclass ns3::NetDevice (see
-    // wsn-net-device.h); this override exists only to satisfy the
-    // ns3::Channel interface and is not used by this module.
-    return nullptr;
+    return i < m_devices.size() ? m_devices[i] : nullptr;
 }
 
 void
@@ -726,12 +747,25 @@ WsnChannel::DeliverIfSuccessful(Ptr<WsnNetDevice> sender, Ptr<WsnNetDevice> rece
 {
     // Positions are tracked externally through each device's node id and
     // an ns-3 MobilityModel installed on that node by the simulation
-    // script; see scratch/leo-topologies.cc.
-    Ptr<Node> n1 = NodeList::GetNode(sender->GetNodeId());
-    Ptr<Node> n2 = NodeList::GetNode(receiver->GetNodeId());
+    // script; see scratch/leo-topologies.cc. Fail closed if that contract
+    // is violated: silently substituting distance=1 m would fabricate a
+    // strong link and hide a broken simulation configuration.
+    const uint32_t senderId = sender->GetNodeId();
+    const uint32_t receiverId = receiver->GetNodeId();
+    NS_ABORT_MSG_IF(senderId >= NodeList::GetNNodes() || receiverId >= NodeList::GetNNodes(),
+                    "WsnChannel node id is outside NodeList: sender="
+                        << senderId << " receiver=" << receiverId
+                        << " nNodes=" << NodeList::GetNNodes());
+    Ptr<Node> n1 = NodeList::GetNode(senderId);
+    Ptr<Node> n2 = NodeList::GetNode(receiverId);
     Ptr<MobilityModel> m1 = n1->GetObject<MobilityModel>();
     Ptr<MobilityModel> m2 = n2->GetObject<MobilityModel>();
-    double distance = m1 && m2 ? m1->GetDistanceFrom(m2) : 1.0;
+    NS_ABORT_MSG_IF(!m1 || !m2,
+                    "WsnChannel requires a MobilityModel on both endpoint nodes: sender="
+                        << senderId << " hasMobility=" << static_cast<bool>(m1)
+                        << " receiver=" << receiverId
+                        << " hasMobility=" << static_cast<bool>(m2));
+    double distance = m1->GetDistanceFrom(m2);
 
     double lslDb = LinkSignalLossDb(distance, m_environmentFactor, m_signalLossPerMeterDbm);
     double rssiDbm = txPowerDbm + lslDb; // LSL already includes the sign, Eq. (6)/(18)
@@ -750,23 +784,38 @@ WsnChannel::DeliverIfSuccessful(Ptr<WsnNetDevice> sender, Ptr<WsnNetDevice> rece
     double prr = PrrFromSnrDb(snrDb);
     bool delivered = m_rng->GetValue(0.0, 1.0) <= prr;
 
+    WsnLinkInfoTag tag;
+    tag.rssiDbm = rssiDbm;
+    tag.snrDb = snrDb;
+    tag.txPowerDbm = txPowerDbm;
+    Ptr<Packet> copy = packet->Copy();
+    Mac48Address from = sender->GetAddress();
+
     // Propagation delay is neglected (paper's simulator likewise
-    // abstracts the PHY; only PRR/energy matter for the metric study).
+    // abstracts the PHY).  Both successful and failed reception attempts
+    // execute under the receiver's node context.  A failed decode is
+    // reported only to the energy-accounting callback; no protocol packet
+    // is delivered upward.
     if (delivered)
     {
-        WsnLinkInfoTag tag;
-        tag.rssiDbm = rssiDbm;
-        tag.snrDb = snrDb;
-        tag.txPowerDbm = txPowerDbm;
-        Ptr<Packet> copy = packet->Copy();
-        Mac48Address from = sender->GetAddress();
-        Simulator::ScheduleNow(&WsnNetDevice::Receive, receiver, copy, from, tag);
+        Simulator::ScheduleWithContext(receiver->GetNodeId(),
+                                       Seconds(0),
+                                       &WsnNetDevice::Receive,
+                                       receiver,
+                                       copy,
+                                       from,
+                                       tag);
     }
-    // On failure we simply do not schedule delivery; the routing
-    // application's retransmission/timeout logic (wsn-routing-app.cc)
-    // observes this as a lost frame, consistent with the paper's PRR
-    // definition ("ratio of successfully received packets to the total
-    // number of packets sent").
+    else
+    {
+        Simulator::ScheduleWithContext(receiver->GetNodeId(),
+                                       Seconds(0),
+                                       &WsnNetDevice::ReceiveFailed,
+                                       receiver,
+                                       copy,
+                                       from,
+                                       tag);
+    }
 }
 
 } // namespace leo

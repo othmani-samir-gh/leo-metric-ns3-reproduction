@@ -1,0 +1,38 @@
+{
+  "data_counts": {
+    "configurations": 617,
+    "main_rows": 12340,
+    "pending": 0,
+    "receipts_pass": 617,
+    "route_rows": 2344600
+  },
+  "dataset_asset_sha256": "e32b25adcca49abcbe732ba75d80390d07542128395fca5332af3235cded3783",
+  "decision": "TECHNICALLY_ELIGIBLE_FOR_RELEASE_CANDIDATE",
+  "frozen_plan_sha256": "fb6d360f6f1f88ea50e59b91d2ae147e0c22c2c3e9ff195212e8fe89c932428e",
+  "manifest_sha256": "f36d0510e3dbb0d3c9adffa565c74ad2c5026b77fa1cf04b411ba46f49f4c520",
+  "ns3_commit": "d2add90b452d600cfb4859baed8e9ea633519447",
+  "pre_closeout_head": "82cd0fa0d9caf041d6226b6cd6447d8374afafad",
+  "pre_closeout_tree": "4d4707fc2c8ed529ed0b0bd175786fb9a14cf1a3",
+  "publication_state": "HUMAN_GATE",
+  "r5_binary_sha256": "7422bd9951a645553edabe7335c62270a076516c130523f006ec96e42b1de5eb",
+  "r5_integrity_sha256": "b018228161ab2d30be37076258f3ef641fb6f161f7d23910643986a384f043f0",
+  "r6_checksums_sha256": "615d09f92b20de55286d6995b10e62e1a3d4eccfd512f1b8cef1a92f94a5f5c1",
+  "r7_final_qc_sha256": "4b8f5101fd3b139eb3c4ae86ded2edf5530554438830a08ba499857744ac3c62",
+  "release_claim_boundary": {
+    "not_supported": [
+      "Universal LEO energy superiority.",
+      "Generic superiority over operational LQI.",
+      "Confirmatory interference claims.",
+      "Exact replay of unpublished original simulator code.",
+      "Mobility as part of primary source-reproduction inference."
+    ],
+    "supported": [
+      "LEO materially changes routes versus hopcount and operational LQI.",
+      "LEO reduces timeout/no-route outcomes versus hopcount across non-interference relay caps in the primary static reconstruction.",
+      "LEO energy reduction versus hopcount is confirmatory only at relayCap=1 in the primary non-interference design."
+    ]
+  },
+  "release_target": "v1.1.0",
+  "scientific_execution_source_commit": "c95c9548bd790170697d3d35a401c618290c04dd",
+  "scientific_execution_source_tree": "a0f60011722f87f61710fe96ad54f1adf2047b8f"
+}

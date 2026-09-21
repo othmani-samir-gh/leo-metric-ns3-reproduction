@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
-discrimination_check.py
+discrimination_check.py — LEGACY v1.0.0 ONLY.
+
+WARNING: this historical diagnostic uses energy equality as a proxy for route
+identity and recommends outcome-dependent exclusion. Both practices are
+forbidden for v1.1.0 inference. Direct routeFingerprint evidence is now
+available; use analysis/r6_statistical_reanalysis.py.
+
+Historical description follows.
 
 Diagnostic for a critical validity question: do the compared metrics
 actually select DIFFERENT routes in a given scenario, or do they

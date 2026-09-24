@@ -23,7 +23,7 @@ cd "$NS3"
 cmake --build cmake-cache --target leo-wsn -j3 >/tmp/leo-r5-module-build.log 2>&1
 
 COMMON="-std=c++23 -O2 -I$NS3/build/include -L$NS3/build/lib -Wl,-rpath,$NS3/build/lib"
-LIBS="-Wl,--no-as-needed -lns3.48-leo-wsn-default -Wl,--as-needed -lns3.48-applications-default -lns3.48-energy-default -lns3.48-mobility-default -lns3.48-network-default -lns3.48-core-default -lstdc++_libbacktrace"
+LIBS="-Wl,--no-as-needed -lns3.48-leo-wsn-debug -Wl,--as-needed -lns3.48-applications-debug -lns3.48-energy-debug -lns3.48-mobility-debug -lns3.48-network-debug -lns3.48-core-debug -lstdc++_libbacktrace"
 g++ $COMMON "$REPO/scratch/leo-topologies.cc" $LIBS -o "$OUT/leo-topologies"
 
 cd "$REPO"
@@ -34,7 +34,7 @@ ns3=pathlib.Path(sys.argv[2])
 manifest_sha=sys.argv[3]
 plan_sha=sys.argv[4]
 binary=repo/"build/r5/leo-topologies"
-lib=ns3/"build/lib/libns3.48-leo-wsn-default.so"
+lib=ns3/"build/lib/libns3.48-leo-wsn-debug.so"
 def sha(p): return hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
 receipt={
  "schema_version":"1.0",

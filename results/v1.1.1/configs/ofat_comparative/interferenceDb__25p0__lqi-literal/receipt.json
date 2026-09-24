@@ -1,0 +1,17 @@
+{
+  "binary_sha256": "6874659ac42e29da6f988587a4451877c5eda312b469d7267d17b395b4f25688",
+  "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "main_rows": 20,
+  "main_sha256": "5254b78eedecdbd6cb567950d5e8a9c3f8d7a592723afb2460411c74b56bc5d4",
+  "manifest_sha256": "f36d0510e3dbb0d3c9adffa565c74ad2c5026b77fa1cf04b411ba46f49f4c520",
+  "ns3_commit": "d2add90b452d600cfb4859baed8e9ea633519447",
+  "plan_sha256": "d9be873452e768145a912642dc6aeeb722805be3144d8eeb94d2f12aea1eb92f",
+  "route_rows": 3800,
+  "routes_sha256": "4fd078a0290595ada65d2ac0117dc3181c2fb72e149e0416ae9ba2f6c5c7a0b3",
+  "scenarioId": "interferenceDb__25p0__lqi-literal",
+  "scenarioSet": "ofat_comparative",
+  "source_commit": "c95c9548bd790170697d3d35a401c618290c04dd",
+  "source_tree": "a0f60011722f87f61710fe96ad54f1adf2047b8f",
+  "status": "PASS",
+  "wall_seconds": 3.7732951641082764
+}

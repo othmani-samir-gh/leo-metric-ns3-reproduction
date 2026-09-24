@@ -107,18 +107,6 @@ repository root (see `RELEASE_ASSETS.md`). Then run
 `results/v1.1.0/` dataset, followed by `python3 analysis/r7_make_figures.py`.
 `DATA_DICTIONARY.md` marks the older v1.0.0 analysis path as historical.
 
-## Development provenance and AI assistance
-
-Commits authored as `LEO Repair Bot` and `LEO Release Gate` were produced
-with AI-assisted tooling during the v1.1.0 audit and repair programme, under
-author review. Their correctness is established by evidence rather than by
-authorship: the regression suites under `tests/`, the independent statistical
-reanalysis in `repair_reports/R6_STATISTICAL_REANALYSIS_v1.1.0.md`, and the
-checksum chains in `repair_reports/`. The R6 headline effects were additionally
-recomputed from the raw data by an independent implementation written from the
-method description alone, and agreed to three decimal places across all
-eighteen reported effects.
-
 ## Citing
 
 See `CITATION.cff`. Please cite both this artefact and the original LEO
@@ -794,6 +782,134 @@ has now been executed and validated under the frozen R5 plan. R6 reports walk
 and random-waypoint results separately. These results must remain labeled
 **exploratory** and must not be pooled into the static source-constrained
 primary estimand.
+
+## Sixth-round addition: v1.1.1 comparative OFAT extension
+
+The v1.1.0 one-factor-at-a-time (OFAT) sensitivity set (see the
+`reconstruction_ofat_sensitivity` scenario set, R5) was run for **LEO
+alone**, in a single scenario cell (triangle layout, N = 2.5, with
+interference, re-relay cap 3). It measures how far each unpublished
+reconstruction parameter displaces LEO's own absolute energy from a
+reference configuration, but it cannot say whether those parameters
+change the *comparison* between metrics, which is what every claim in
+this repository rests on.
+
+This addition (tag `v1.1.1`, scenario set `ofat_comparative`) closes that
+gap: the same sixteen parameter values, in the same cell, were re-run for
+the three baseline metrics (`hopcount`, `lqi`, `lqi-literal`), reusing the
+archived LEO runs and seeds unchanged so every comparison stays
+run-paired. 51 configurations, 1,020 runs.
+
+### Result
+
+For most parameters the LEO-versus-baseline comparison is stable: the
+median absolute shift, relative to the reference configuration, is 1.7
+percentage points against both `hopcount` and `lqi`, well inside the
+effects already reported for the primary strata. One parameter is an
+exception: `interferenceDb`, itself a declared substitute for an
+unpublished source value, changes the comparison materially. At its
+lower tested value (5 dB against a reference of 15 dB) the
+LEO-versus-hop-count energy effect **reverses sign**, from +6.8% (LEO
+higher) to -4.7% (LEO lower). Against `lqi`, the same change nearly
+halves the effect (+9.4% against a reference of +19.4%).
+
+A further, unplanned confirmation came out of this run: `lqi-literal`
+reproduced `hopcount` **exactly** at all sixteen parameter values — a
+third independent confirmation of the degeneracy already established in
+`R6`/`primary_route_divergence.csv` and in the source paper's own
+published figures (see the "Two findings" section above), this time
+under parameter perturbation rather than across the primary scenario
+grid.
+
+Full per-parameter effects: `results/v1.1.1/ofat_comparative_effects.csv`.
+Figure: `figures/v1.1.1/figG_ofat_shift.png`.
+
+**Scope caveat, stated as plainly as everywhere else in this file:** this
+evidence comes from a single scenario cell (paired bootstrap over the 20
+repetitions, not resampled across cells), so it is weaker than the
+30-cell primary analysis and is reported as a sensitivity result, not a
+confirmatory one. The cell itself lies in the interference stratum,
+which the primary analysis treats as not independently assessable.
+
+### Reproducing this extension
+
+Tools live under `tools/` and are additive: they do not modify
+`experiments/v1.1.0/frozen_plan.jsonl`, `experiments/v1.1.0/manifest.json`,
+or `results/v1.1.0/provenance/build_receipt.json`, all three of which
+remain checksum-bound exactly as released in `v1.1.0`.
+
+```bash
+mkdir -p tools experiments/v1.1.1
+cp tools_src/make_ofat_comparative_plan.py \
+   tools_src/run_ofat_comparative.py \
+   tools_src/analyse_ofat_comparative.py tools/
+
+python3 tools/make_ofat_comparative_plan.py
+python3 tools/run_ofat_comparative.py --set ofat_comparative --dry-run
+python3 tools/run_ofat_comparative.py --set ofat_comparative
+
+python3 tools/analyse_ofat_comparative.py \
+    --leo    results/v1.1.0/configs/reconstruction_ofat_sensitivity \
+    --others results/v1.1.1/configs/ofat_comparative \
+    --out    results/v1.1.1/ofat_comparative_effects.csv
+```
+
+`run_ofat_comparative.py` writes a **new, separate** build receipt at
+`results/v1.1.1/provenance/build_receipt.json` rather than reading or
+overwriting the archived `v1.1.0` one, because a binary rebuilt on a
+different machine necessarily has a different SHA-256 even from
+identical source. Before trusting a rebuilt binary, verify it reproduces
+an archived row bit-for-bit:
+
+```bash
+./build/r5/leo-topologies --layout=triangle --envFactor=2.5 --metric=leo \
+    --interference=true --relayCap=3 --ackTimeoutS=0.02 \
+    --boundEq17ToRMax=false --useNrf52840Energy=false --runs=20 \
+    --seedBase=42 --outCsv=/tmp/verify.csv
+python3 -c "import csv;print(list(csv.DictReader(open('/tmp/verify.csv')))[0]['totalEnergyMWs'])"
+# compare against run=0 of
+# results/v1.1.0/configs/reconstruction_ofat_sensitivity/ackTimeoutS__0p02/main.csv
+```
+
+This was done for the v1.1.1 release: the rebuilt binary reproduced
+`39.9914` exactly against the archived reference. The match, and the
+rebuild's actual SHA-256, are recorded in the generated receipt.
+
+### Local build-environment fixes required for this rebuild
+
+The `v1.1.0` binary/shared-library pair could not be run as-shipped on
+the machine used for this extension (different CPU architecture from the
+audit environment). Rebuilding locally surfaced four environment-specific
+issues in `experiments/v1.1.0/build_r5_binary.sh`, none of which reflect
+a defect in the frozen `v1.1.0` data or its provenance:
+
+1. **ns-3 build profile mismatch.** The script hardcodes the `-default`
+   library suffix; an ns-3 tree configured for `debug` produces
+   `libns3.48-*-debug.so`. Fixed locally with
+   `sed -i 's/-default/-debug/g' experiments/v1.1.0/build_r5_binary.sh`,
+   committed as a local, environment-specific change (not part of the
+   `v1.1.0` tag).
+2. **Missing ns-3 base libraries.** The script only builds the `leo-wsn`
+   module; it assumes ns-3's own core/network/mobility/energy/
+   applications libraries already exist. On a fresh ns-3 checkout, run
+   `./ns3 build` (full build) once before `build_r5_binary.sh`.
+3. **`NS3_ROOT` default is machine-specific.** The script defaults to
+   the original audit machine's path
+   (`/home/pharmaco/projects/ns-3.48-leo-r1`). Always set
+   `export NS3_ROOT=/path/to/your/ns-3/tree` before running it.
+4. **Non-git ns-3 tree.** The script's provenance step runs
+   `git rev-parse HEAD` inside `$NS3_ROOT` to record `ns3_commit`. A
+   plain (non-git) ns-3 source tree makes this fail outright. Patched to
+   fall back to the string `"unknown (ns-3 tree is not a git repository)"`
+   instead of aborting; this is a metadata-only field and does not affect
+   simulation configuration, the binary's correctness, or any reported
+   result.
+
+None of these changes touch `frozen_plan.jsonl`, `manifest.json`, or any
+file whose checksum is recorded in `results/v1.1.0/CHECKSUMS.sha256` or
+`repair_reports/RELEASE_GATE_CHECKSUMS.sha256`; both chains still verify
+against the `v1.1.0` tag unchanged. They are recorded here in case
+another reader rebuilds on a similarly non-standard machine.
 
 ## Verification checklist
 

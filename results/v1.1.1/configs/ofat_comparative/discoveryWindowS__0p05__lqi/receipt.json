@@ -1,0 +1,17 @@
+{
+  "binary_sha256": "6874659ac42e29da6f988587a4451877c5eda312b469d7267d17b395b4f25688",
+  "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "main_rows": 20,
+  "main_sha256": "f2b409336da81531d598aaf1a6ce306802debeb8ee157a49cb056614f837c5fa",
+  "manifest_sha256": "f36d0510e3dbb0d3c9adffa565c74ad2c5026b77fa1cf04b411ba46f49f4c520",
+  "ns3_commit": "d2add90b452d600cfb4859baed8e9ea633519447",
+  "plan_sha256": "d9be873452e768145a912642dc6aeeb722805be3144d8eeb94d2f12aea1eb92f",
+  "route_rows": 3800,
+  "routes_sha256": "89e7dcd3638e369779e17330fc64c6fc88af6da0f9c6e7f7c77e9fec209eaa13",
+  "scenarioId": "discoveryWindowS__0p05__lqi",
+  "scenarioSet": "ofat_comparative",
+  "source_commit": "c95c9548bd790170697d3d35a401c618290c04dd",
+  "source_tree": "a0f60011722f87f61710fe96ad54f1adf2047b8f",
+  "status": "PASS",
+  "wall_seconds": 4.763807535171509
+}

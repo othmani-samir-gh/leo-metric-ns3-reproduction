@@ -1,0 +1,25 @@
+{
+  "binary_path": "build/r5/leo-topologies",
+  "binary_sha256": "6874659ac42e29da6f988587a4451877c5eda312b469d7267d17b395b4f25688",
+  "cmake": "cmake version 3.28.3",
+  "compiler": "g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "leo_wsn_library_sha256": "f9a27807056c553115ead8b0b1926fae3112338e54fcb895ee90550eeaccd937",
+  "manifest_sha256": "f36d0510e3dbb0d3c9adffa565c74ad2c5026b77fa1cf04b411ba46f49f4c520",
+  "ns3_commit": "d2add90b452d600cfb4859baed8e9ea633519447",
+  "original_v1_1_0_receipt": "results/v1.1.0/provenance/build_receipt.json",
+  "plan_sha256": "fb6d360f6f1f88ea50e59b91d2ae147e0c22c2c3e9ff195212e8fe89c932428e",
+  "rebuild_reason": "original v1.1.0 binary/shared library unavailable on this machine (different build environment: debug vs default library profile)",
+  "rebuild_verification": {
+    "field": "totalEnergyMWs",
+    "note": "exact match against results/v1.1.0/configs/reconstruction_ofat_sensitivity/ackTimeoutS__0p02/main.csv, run=0, confirmed before this extension was executed",
+    "run": 0,
+    "scenario": "ackTimeoutS__0p02",
+    "value": "39.9914"
+  },
+  "rebuilt_at": "2026-09-24T10:41:36.548920Z",
+  "rebuilt_locally": true,
+  "schema_version": "1.0",
+  "source_commit": "c95c9548bd790170697d3d35a401c618290c04dd",
+  "source_tree": "a0f60011722f87f61710fe96ad54f1adf2047b8f",
+  "stage": "R5_BUILD"
+}
